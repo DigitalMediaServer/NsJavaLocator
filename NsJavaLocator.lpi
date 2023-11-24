@@ -1,0 +1,406 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <ProjectOptions>
+    <Version Value="12"/>
+    <PathDelim Value="\"/>
+    <General>
+      <Flags>
+        <MainUnitHasUsesSectionForAllUnits Value="False"/>
+        <MainUnitHasCreateFormStatements Value="False"/>
+        <MainUnitHasTitleStatement Value="False"/>
+        <MainUnitHasScaledStatement Value="False"/>
+        <Runnable Value="False"/>
+        <CompatibilityMode Value="True"/>
+      </Flags>
+      <SessionStorage Value="InProjectDir"/>
+      <Title Value="NsJavaLocator"/>
+      <UseAppBundle Value="False"/>
+      <ResourceType Value="res"/>
+    </General>
+    <VersionInfo>
+      <UseVersionInfo Value="True"/>
+      <RevisionNr Value="1"/>
+      <CharSet Value="04B0"/>
+      <StringTable FileDescription="NSIS plugin" OriginalFilename="NsJavaLocator.dll" ProductName="NSIS Java Locator"/>
+    </VersionInfo>
+    <BuildModes Count="7">
+      <Item1 Name="Default" Default="True"/>
+      <Item2 Name="Debug x86">
+        <CompilerOptions>
+          <Version Value="11"/>
+          <PathDelim Value="\"/>
+          <SearchPaths>
+            <IncludeFiles Value="$(ProjOutDir)"/>
+            <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
+          </SearchPaths>
+          <Parsing>
+            <SyntaxOptions>
+              <SyntaxMode Value="Delphi"/>
+              <IncludeAssertionCode Value="True"/>
+            </SyntaxOptions>
+          </Parsing>
+          <CodeGeneration>
+            <Checks>
+              <IOChecks Value="True"/>
+              <RangeChecks Value="True"/>
+              <OverflowChecks Value="True"/>
+              <StackChecks Value="True"/>
+            </Checks>
+            <VerifyObjMethodCallValidity Value="True"/>
+            <TargetCPU Value="i386"/>
+            <TargetOS Value="win32"/>
+          </CodeGeneration>
+          <Linking>
+            <Debugging>
+              <UseHeaptrc Value="True"/>
+              <TrashVariables Value="True"/>
+              <UseExternalDbgSyms Value="True"/>
+            </Debugging>
+            <Options>
+              <ExecutableType Value="Library"/>
+            </Options>
+          </Linking>
+          <Other>
+            <CustomOptions Value="-dBorland
+-dVer150
+-dDelphi7
+-dCompiler6_Up
+-dPUREPASCAL
+-dUNICODE"/>
+            <OtherDefines Count="6">
+              <Define0 Value="Borland"/>
+              <Define1 Value="Ver150"/>
+              <Define2 Value="Delphi7"/>
+              <Define3 Value="Compiler6_Up"/>
+              <Define4 Value="PUREPASCAL"/>
+              <Define5 Value="UNICODE"/>
+            </OtherDefines>
+          </Other>
+        </CompilerOptions>
+      </Item2>
+      <Item3 Name="Release x86 ANSI">
+        <CompilerOptions>
+          <Version Value="11"/>
+          <PathDelim Value="\"/>
+          <Target>
+            <Filename Value="out\x86-ansi\NsJavaLocator.dll"/>
+          </Target>
+          <SearchPaths>
+            <IncludeFiles Value="$(ProjOutDir)"/>
+            <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)-ansi"/>
+          </SearchPaths>
+          <Parsing>
+            <SyntaxOptions>
+              <SyntaxMode Value="Delphi"/>
+            </SyntaxOptions>
+          </Parsing>
+          <CodeGeneration>
+            <SmartLinkUnit Value="True"/>
+            <TargetCPU Value="i386"/>
+            <TargetOS Value="win32"/>
+            <Optimizations>
+              <OptimizationLevel Value="3"/>
+            </Optimizations>
+            <SmallerCode Value="True"/>
+          </CodeGeneration>
+          <Linking>
+            <Debugging>
+              <GenerateDebugInfo Value="False"/>
+              <StripSymbols Value="True"/>
+            </Debugging>
+            <LinkSmart Value="True"/>
+            <Options>
+              <ExecutableType Value="Library"/>
+            </Options>
+          </Linking>
+          <Other>
+            <CustomOptions Value="-dBorland
+-dVer150
+-dDelphi7
+-dCompiler6_Up
+-dPUREPASCAL"/>
+            <OtherDefines Count="6">
+              <Define0 Value="Borland"/>
+              <Define1 Value="Ver150"/>
+              <Define2 Value="Delphi7"/>
+              <Define3 Value="Compiler6_Up"/>
+              <Define4 Value="PUREPASCAL"/>
+              <Define5 Value="UNICODE"/>
+            </OtherDefines>
+          </Other>
+        </CompilerOptions>
+      </Item3>
+      <Item4 Name="Release x86 Unicode">
+        <CompilerOptions>
+          <Version Value="11"/>
+          <PathDelim Value="\"/>
+          <Target>
+            <Filename Value="out\x86-unicode\NsJavaLocator.dll"/>
+          </Target>
+          <SearchPaths>
+            <IncludeFiles Value="$(ProjOutDir)"/>
+            <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)-unicode"/>
+          </SearchPaths>
+          <Parsing>
+            <SyntaxOptions>
+              <SyntaxMode Value="Delphi"/>
+            </SyntaxOptions>
+          </Parsing>
+          <CodeGeneration>
+            <SmartLinkUnit Value="True"/>
+            <TargetCPU Value="i386"/>
+            <TargetOS Value="win32"/>
+            <Optimizations>
+              <OptimizationLevel Value="3"/>
+            </Optimizations>
+            <SmallerCode Value="True"/>
+          </CodeGeneration>
+          <Linking>
+            <Debugging>
+              <GenerateDebugInfo Value="False"/>
+              <StripSymbols Value="True"/>
+            </Debugging>
+            <LinkSmart Value="True"/>
+            <Options>
+              <ExecutableType Value="Library"/>
+            </Options>
+          </Linking>
+          <Other>
+            <CompilerMessages>
+              <IgnoredMessages idx6058="True"/>
+            </CompilerMessages>
+            <CustomOptions Value="-dBorland
+-dVer150
+-dDelphi7
+-dCompiler6_Up
+-dPUREPASCAL
+-dUNICODE"/>
+            <OtherDefines Count="6">
+              <Define0 Value="Borland"/>
+              <Define1 Value="Ver150"/>
+              <Define2 Value="Delphi7"/>
+              <Define3 Value="Compiler6_Up"/>
+              <Define4 Value="PUREPASCAL"/>
+              <Define5 Value="UNICODE"/>
+            </OtherDefines>
+          </Other>
+        </CompilerOptions>
+      </Item4>
+      <Item5 Name="Debug x64">
+        <CompilerOptions>
+          <Version Value="11"/>
+          <PathDelim Value="\"/>
+          <SearchPaths>
+            <IncludeFiles Value="$(ProjOutDir)"/>
+            <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
+          </SearchPaths>
+          <Parsing>
+            <SyntaxOptions>
+              <SyntaxMode Value="Delphi"/>
+              <IncludeAssertionCode Value="True"/>
+            </SyntaxOptions>
+          </Parsing>
+          <CodeGeneration>
+            <Checks>
+              <IOChecks Value="True"/>
+              <RangeChecks Value="True"/>
+              <OverflowChecks Value="True"/>
+              <StackChecks Value="True"/>
+            </Checks>
+            <VerifyObjMethodCallValidity Value="True"/>
+            <TargetCPU Value="x86_64"/>
+            <TargetOS Value="win64"/>
+          </CodeGeneration>
+          <Linking>
+            <Debugging>
+              <UseHeaptrc Value="True"/>
+              <TrashVariables Value="True"/>
+              <UseExternalDbgSyms Value="True"/>
+            </Debugging>
+            <Options>
+              <ExecutableType Value="Library"/>
+            </Options>
+          </Linking>
+          <Other>
+            <CustomOptions Value="-dBorland
+-dVer150
+-dDelphi7
+-dCompiler6_Up
+-dPUREPASCAL
+-dUNICODE"/>
+            <OtherDefines Count="6">
+              <Define0 Value="Borland"/>
+              <Define1 Value="Ver150"/>
+              <Define2 Value="Delphi7"/>
+              <Define3 Value="Compiler6_Up"/>
+              <Define4 Value="PUREPASCAL"/>
+              <Define5 Value="UNICODE"/>
+            </OtherDefines>
+          </Other>
+        </CompilerOptions>
+      </Item5>
+      <Item6 Name="Release x64 Unicode">
+        <CompilerOptions>
+          <Version Value="11"/>
+          <PathDelim Value="\"/>
+          <Target>
+            <Filename Value="out\x64-unicode\NsJavaLocator.dll"/>
+          </Target>
+          <SearchPaths>
+            <IncludeFiles Value="$(ProjOutDir)"/>
+            <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)-unicode"/>
+          </SearchPaths>
+          <Parsing>
+            <SyntaxOptions>
+              <SyntaxMode Value="Delphi"/>
+            </SyntaxOptions>
+          </Parsing>
+          <CodeGeneration>
+            <SmartLinkUnit Value="True"/>
+            <TargetCPU Value="x86_64"/>
+            <TargetOS Value="win64"/>
+            <Optimizations>
+              <OptimizationLevel Value="3"/>
+            </Optimizations>
+            <SmallerCode Value="True"/>
+          </CodeGeneration>
+          <Linking>
+            <Debugging>
+              <GenerateDebugInfo Value="False"/>
+              <StripSymbols Value="True"/>
+            </Debugging>
+            <LinkSmart Value="True"/>
+            <Options>
+              <ExecutableType Value="Library"/>
+            </Options>
+          </Linking>
+          <Other>
+            <CustomOptions Value="-dBorland
+-dVer150
+-dDelphi7
+-dCompiler6_Up
+-dPUREPASCAL
+-dUNICODE"/>
+            <OtherDefines Count="6">
+              <Define0 Value="Borland"/>
+              <Define1 Value="Ver150"/>
+              <Define2 Value="Delphi7"/>
+              <Define3 Value="Compiler6_Up"/>
+              <Define4 Value="PUREPASCAL"/>
+              <Define5 Value="UNICODE"/>
+            </OtherDefines>
+          </Other>
+        </CompilerOptions>
+      </Item6>
+      <Item7 Name="Release x64 ANSI">
+        <CompilerOptions>
+          <Version Value="11"/>
+          <PathDelim Value="\"/>
+          <Target>
+            <Filename Value="out\x64-ansi\NsJavaLocator.dll"/>
+          </Target>
+          <SearchPaths>
+            <IncludeFiles Value="$(ProjOutDir)"/>
+            <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)-ansi"/>
+          </SearchPaths>
+          <Parsing>
+            <SyntaxOptions>
+              <SyntaxMode Value="Delphi"/>
+            </SyntaxOptions>
+          </Parsing>
+          <CodeGeneration>
+            <SmartLinkUnit Value="True"/>
+            <TargetCPU Value="x86_64"/>
+            <TargetOS Value="win64"/>
+            <Optimizations>
+              <OptimizationLevel Value="3"/>
+            </Optimizations>
+            <SmallerCode Value="True"/>
+          </CodeGeneration>
+          <Linking>
+            <Debugging>
+              <GenerateDebugInfo Value="False"/>
+              <StripSymbols Value="True"/>
+            </Debugging>
+            <LinkSmart Value="True"/>
+            <Options>
+              <ExecutableType Value="Library"/>
+            </Options>
+          </Linking>
+          <Other>
+            <CustomOptions Value="-dBorland
+-dVer150
+-dDelphi7
+-dCompiler6_Up
+-dPUREPASCAL"/>
+            <OtherDefines Count="6">
+              <Define0 Value="Borland"/>
+              <Define1 Value="Ver150"/>
+              <Define2 Value="Delphi7"/>
+              <Define3 Value="Compiler6_Up"/>
+              <Define4 Value="PUREPASCAL"/>
+              <Define5 Value="UNICODE"/>
+            </OtherDefines>
+          </Other>
+        </CompilerOptions>
+      </Item7>
+      <SharedMatrixOptions Count="1">
+        <Item1 ID="487740862725" Modes="Release x86 Unicode,Debug x86,Release x86 ANSI,Debug x64,Release x64 Unicode,Release x64 ANSI,Default" Value="-dDisableUTF8RTL"/>
+      </SharedMatrixOptions>
+    </BuildModes>
+    <PublishOptions>
+      <Version Value="2"/>
+      <UseFileFilters Value="True"/>
+    </PublishOptions>
+    <RunParams>
+      <FormatVersion Value="2"/>
+    </RunParams>
+    <Units Count="2">
+      <Unit0>
+        <Filename Value="NsJavaLocator.lpr"/>
+        <IsPartOfProject Value="True"/>
+      </Unit0>
+      <Unit1>
+        <Filename Value="NSIS.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit1>
+    </Units>
+  </ProjectOptions>
+  <CompilerOptions>
+    <Version Value="11"/>
+    <PathDelim Value="\"/>
+    <SearchPaths>
+      <IncludeFiles Value="$(ProjOutDir)"/>
+      <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
+    </SearchPaths>
+    <Parsing>
+      <SyntaxOptions>
+        <SyntaxMode Value="Delphi"/>
+      </SyntaxOptions>
+    </Parsing>
+    <CodeGeneration>
+      <TargetCPU Value="i386"/>
+    </CodeGeneration>
+    <Linking>
+      <Options>
+        <ExecutableType Value="Library"/>
+      </Options>
+    </Linking>
+    <Other>
+      <CustomOptions Value="-dBorland -dVer150 -dDelphi7 -dCompiler6_Up -dPUREPASCAL"/>
+    </Other>
+  </CompilerOptions>
+  <Debugging>
+    <Exceptions Count="3">
+      <Item1>
+        <Name Value="EAbort"/>
+      </Item1>
+      <Item2>
+        <Name Value="ECodetoolError"/>
+      </Item2>
+      <Item3>
+        <Name Value="EFOpenError"/>
+      </Item3>
+    </Exceptions>
+  </Debugging>
+</CONFIG>
