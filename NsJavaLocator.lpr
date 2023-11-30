@@ -28,33 +28,125 @@ uses
 	SysUtils,
 	Classes,
 	RegExpr,
+	fgl,
 	NSIS in 'NSIS.pas';
 
 type
+	TNSISTStringList = class(TFPGList<NSISTString>);
 
 	{ TParameters }
 
 	TParameters = class(TObject)
 	private
-		FRegistryPaths : TStringList;
-		FFilePaths : TStringList;
+		FRegistryPaths : TNSISTStringList;
+		FFilePaths : TNSISTStringList;
 		FIsLogging : Boolean;
 		FIsDialogDebug : Boolean;
-		function ReadParams() : TStringList;
+		function ReadParams() : TNSISTStringList;
 		function GetLogging() : Boolean;
 		function GetDialogDebug() : Boolean;
 	public
-		function GetRegistryPaths() : TStringList;
-		function GetFilePaths() : TStringList;
+		function GetRegistryPaths() : TNSISTStringList;
+		function GetFilePaths() : TNSISTStringList;
 		procedure ParseParams();
 		constructor Create();
 		destructor Destroy(); override;
 	published
-		property RegistryPaths : TStringList read GetRegistryPaths;
-		property Filepaths : TStringList read GetFilePaths;
+		property RegistryPaths : TNSISTStringList read GetRegistryPaths;
+		property Filepaths : TNSISTStringList read GetFilePaths;
 		property IsLogging : Boolean read GetLogging;
 		property IsDialogDebug : Boolean read GetDialogDebug;
 	end;
+
+function IntToNStr(Value : QWord) : NSISTString; overload;
+begin
+	Result := NSISTString(IntToStr(Value));
+end;
+
+function IntToNStr(Value : Int64) : NSISTString; overload;
+begin
+	Result := NSISTString(IntToStr(Value));
+end;
+
+function IntToNStr(Value : LongInt) : NSISTString; overload;
+begin
+	Result := NSISTString(IntToStr(Value));
+end;
+
+function UIntToNStr(Value : QWord) : NSISTString; overload;
+begin
+	Result := NSISTString(UIntToStr(Value));
+end;
+
+function UIntToNStr(Value : Cardinal) : NSISTString; overload;
+begin
+	Result := NSISTString(UIntToStr(Value));
+end;
+
+function NStrToIntDef(const ns : NSISTString; Default : LongInt) : LongInt;
+
+var
+	Error : word;
+
+begin
+	Val(ns, Result, Error);
+	if Error <> 0 then Result := Default;
+end;
+
+function EqualStr(str1, str2 : NSISTString; CaseSensitive : Boolean = true) : Boolean;
+
+var
+	len, i : Integer;
+
+begin
+	Result := False;
+	len := Length(str2);
+	if len <> Length(str1) then Exit;
+	if len = 0 then begin
+		Result := True;
+		Exit;
+	end;
+	if CaseSensitive then begin
+		for i := 1 to len do if str2[i] <> str1[i] then Exit;
+		Result := true;
+	end
+	else begin
+		UniqueString(str1);
+		UniqueString(str2);
+{$IFDEF UNICODE}
+		Result := lstrcmpiW(LPCWSTR(str2), LPCWSTR(str1)) = 0;
+{$ELSE}
+		Result := lstrcmpiA(LPCSTR(str2), LPCSTR(str1)) = 0;
+{$ENDIF}
+	end;
+end;
+
+function EndsWith(subStr : NSISTString; Const str : NSISTString; CaseSensitive : Boolean = true) : Boolean;
+
+var
+	subLen, len, offset, i : Integer;
+	endStr : NSISTString;
+
+begin
+	Result := False;
+	subLen := Length(subStr);
+	len := Length(str);
+	if (subLen = 0) or (len = 0) or (len < subLen) then Exit;
+	if CaseSensitive then begin
+		offset := len - subLen;
+		for i := 1 to subLen do if str[offset + i] <> subStr[i] then Exit;
+		Result := true;
+	end
+	else begin
+		UniqueString(subStr);
+		endStr := Copy(str, len - subLen + 1, subLen);
+{$IFDEF UNICODE}
+		Result := lstrcmpiW(LPCWSTR(endStr), LPCWSTR(subStr)) = 0;
+{$ELSE}
+		Result := lstrcmpiA(LPCSTR(endStr), LPCSTR(subStr)) = 0;
+{$ENDIF}
+	end;
+end;
 
 function SystemErrorToStr(MessageId : DWORD) : NSISTString;
 
@@ -122,7 +214,7 @@ begin
 	end;
 end;
 
-function OpenRegKey(Const rootKey : HKEY; Const subKey : String; samDesired : REGSAM; Const Debug, DialogDebug : Boolean) : HKEY;
+function OpenRegKey(Const rootKey : HKEY; Const subKey : NSISTString; samDesired : REGSAM; Const Debug, DialogDebug : Boolean) : HKEY;
 
 var
 	retVal : LongInt;
@@ -134,7 +226,7 @@ begin
 		Exit;
 	end;
 {$IFDEF UNICODE}
-	retVal := RegOpenKeyExW(rootKey, LPWSTR(UnicodeString(subKey)), 0, samDesired, @Result);
+	retVal := RegOpenKeyExW(rootKey, LPWSTR(subKey), 0, samDesired, @Result);
 {$ELSE}
 	retVal := RegOpenKeyExA(rootKey, LPCSTR(subKey), 0, samDesired, @Result);
 {$ENDIF}
@@ -154,7 +246,7 @@ begin
 	end;
 end;
 
-function GetRegString(const key : HKEY; const valueName : String; const Debug, DialogDebug : Boolean) : UTF8String;
+function GetRegString(const key : HKEY; const valueName : NSISTString; const Debug, DialogDebug : Boolean) : NSISTString;
 var
 	retVal : LONG;
 	dataType : DWORD;
@@ -171,7 +263,7 @@ begin
 	Result := '';
 	if key = 0 then Exit;
 {$IFDEF UNICODE}
-	retVal := RegQueryValueExW(key, LPWSTR(UnicodeString(valueName)), Nil, @dataType, @data, @cbData);
+	retVal := RegQueryValueExW(key, LPWSTR(valueName), Nil, @dataType, @data, @cbData);
 {$ELSE}
 	retVal := RegQueryValueExA(key, LPCSTR(valueName), Nil, @dataType, @data, @cbData);
 {$ENDIF}
@@ -185,7 +277,7 @@ begin
 				end
 				else data[cbData div 2] := WideChar(#0);
 			end;
-			Result := UTF8Encode(UnicodeString(PWideChar(data)));
+			Result := PWideChar(data);
 {$ELSE}
 			if data[cbData - 1] <> #0 then begin
 				if cbData > 1024 then begin
@@ -212,7 +304,7 @@ begin
 	end;
 end;
 
-function EnumerateRegSubKeys(const key : HKEY; Const Debug, DialogDebug : Boolean) : TStringList;
+function EnumerateRegSubKeys(const key : HKEY; Const Debug, DialogDebug : Boolean) : TNSISTStringList;
 
 var
 	subKeys : DWORD = 0;
@@ -227,7 +319,7 @@ var
 {$ENDIF}
 
 begin
-	Result := TStringList.Create;
+	Result := TNSISTStringList.Create;
 	if key = 0 then Exit;
 	retVal := RegQueryInfoKeyA(key, Nil, Nil, Nil, @subKeys, Nil, Nil, Nil, Nil, Nil, Nil, Nil);
 	if retVal <> ERROR_SUCCESS then begin
@@ -248,7 +340,7 @@ begin
 {$IFDEF UNICODE}
 			retVal := RegEnumKeyExW(key, i, PUnicodeChar(lpName), lpcchName, Nil, Nil, Nil, Nil);
 			if retVal = ERROR_SUCCESS then begin
-				Result.Add(UTF8String(lpName));
+				Result.Add(lpName);
 			end
 {$ELSE}
 			retVal := RegEnumKeyExA(key, i, PChar(lpName), lpcchName, Nil, Nil, Nil, Nil);
@@ -282,12 +374,12 @@ const
 	ModernJavaVersionRE = '\s*(\d+)\.(\d+)\.(\d+).*';
 
 var
-	SubKeys, SubKeys2, SubKeys3 : TStringList;
+	SubKeys, SubKeys2, SubKeys3 : TNSISTStringList;
 	regEx : TRegExpr;
 	i, j, k : Integer;
 	iRec : TJavaInstallationRec;
 	hk2, hk3, hk4 : HKEY;
-	s : String;
+	s : NSISTString;
 
 begin
 	SubKeys := EnumerateRegSubKeys(hk, Debug, DialogDebug);
@@ -300,16 +392,16 @@ begin
 					regEx.InputString := SubKeys[i];
 					if (regEx.Exec) and (regEx.Match[1] <> '1') then
 					begin
-						iRec.Version := StrToIntDef(regEx.Match[1], -1);
+						iRec.Version := NStrToIntDef(regEx.Match[1], -1);
 						if iRec.Version < 1 then Continue;
-						iRec.Build := StrToIntDef(regEx.Match[3], -1);
+						iRec.Build := NStrToIntDef(regEx.Match[3], -1);
 						if iRec.Build < 0 then Continue;
 						hk2 := OpenRegKey(hk, SubKeys[i], samDesired, Debug, DialogDebug);
 						if hk2 <> 0 then begin
 							SubKeys2 := EnumerateRegSubKeys(hk2, Debug, DialogDebug);
 							try
 								for j := 0 to SubKeys2.Count - 1 do begin
-									if SameText(SubKeys2[j], 'hotspot') or SameText(SubKeys2[j], 'openj9') then begin
+									if EqualStr(SubKeys2[j], 'hotspot', False) or EqualStr(SubKeys2[j], 'openj9', False) then begin
 										hk3 := OpenRegKey(hk2, SubKeys2[j], samDesired, Debug, DialogDebug);
 										if hk3 <> 0 then begin
 											SubKeys3 := EnumerateRegSubKeys(hk3, Debug, DialogDebug);
@@ -354,7 +446,7 @@ var
 	h, rootKey : HKEY;
 	run : Integer = 0;
 	samDesired : REGSAM = baseSamDesired;
-	subKey : String;
+	subKey : NSISTString;
 
 begin
 	repeat
@@ -376,23 +468,23 @@ begin
 	until ((not Is64) and (run > 1)) or (run > 3);
 end;
 
-function TParameters.GetRegistryPaths() : TStringList;
+function TParameters.GetRegistryPaths() : TNSISTStringList;
 begin
 	Result := FRegistryPaths;
 end;
 
-function TParameters.GetFilePaths() : TStringList;
+function TParameters.GetFilePaths() : TNSISTStringList;
 begin
 	Result := FFilePaths;
 end;
 
-function TParameters.ReadParams() : TStringList;
+function TParameters.ReadParams() : TNSISTStringList;
 var
-	parameter : UTF8String;
+	parameter : NSISTString;
 begin
-	Result := TStringList.Create;
+	Result := TNSISTStringList.Create;
 	parameter := PopString();
-	while (not SameText(parameter, '/END')) and (not SameText(parameter, '/END;')) do begin
+	while (not EqualStr(parameter, '/END', False)) and (not EqualStr(parameter, '/END;', False)) do begin
 		Result.Add(parameter);
 		parameter := PopString();
 	end;
@@ -416,7 +508,7 @@ const
 	poDialogDebug = '/DIALOGDEBUG';
 
 var
-	parameterList : TStringList;
+	parameterList : TNSISTStringList;
 	i : Integer;
 
 begin
@@ -424,8 +516,8 @@ begin
 	i := 0;
 	while i < parameterList.Count do begin
 		if parameterList[i][1] = '/' then begin
-			if SameText(poLog, parameterList[i]) then FIsLogging := True
-			else if SameText(poDialogDebug, parameterList[i]) then FIsDialogDebug := True
+			if EqualStr(poLog, parameterList[i], False) then FIsLogging := True
+			else if EqualStr(poDialogDebug, parameterList[i], False) then FIsDialogDebug := True
 
 			// All value-less options must be handled before this point
 			else if (i + 1 >= parameterList.Count) or (parameterList[i + 1][1] = '/') then begin
@@ -434,7 +526,7 @@ begin
 				NSISDialog('Empty option value for "' + parameterList[i] + '"', 'Error', MB_OK, TDialaogIcon.Error);
 				Inc(i);
 			end
-			else if SameText(poReg, parameterList[i]) then begin
+			else if EqualStr(poReg, parameterList[i], False) then begin
 				FRegistryPaths.Add(parameterList[i + 1]);
 				Inc(i);
 			end
@@ -522,7 +614,7 @@ constructor TParameters.Create();
 }
 
 const
-	StandardRegPaths : array [0..5] of String = (
+	StandardRegPaths : array [0..5] of NSISTString = (
 		'SOFTWARE\JavaSoft',
 		'SOFTWARE\Eclipse Adoptium',
 		'SOFTWARE\Azul Systems\Zulu',
@@ -531,10 +623,15 @@ const
 		'SOFTWARE\BellSoft\Liberica'
 	);
 
+var
+	i : Integer;
+
 begin
-	FRegistryPaths := TStringList.Create();
-	FRegistryPaths.AddStrings(StandardRegPaths);
-	FFilePaths := TStringList.Create();
+	FRegistryPaths := TNSISTStringList.Create();
+	for i := 0 to high(StandardRegPaths) do begin
+		FRegistryPaths.Add(StandardRegPaths[i]);
+	end;
+	FFilePaths := TNSISTStringList.Create();
 	FIsLogging := False;
 	FIsDialogDebug := False;
 end;
