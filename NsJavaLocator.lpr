@@ -16,6 +16,7 @@ library NsJavaLocator;
 }
 
 {$MODE Delphi}
+{$SCOPEDENUMS ON}
 {$WARN 6058 off : Call to subroutine "$1" marked as inline is not inlined}
 {$WARN 3123 off : "$1" not yet supported inside inline procedure/function}
 {$WARN 3124 off : Inlining disabled}
@@ -33,6 +34,7 @@ uses
 
 type
 	TNSISTStringList = class(TFPGList<NSISTString>);
+	TInstallationType = (JDK, JRE, UNKNOWN);
 
 	{ TParameters }
 
@@ -65,6 +67,7 @@ type
 		Version : Integer;
 		Build : Integer;
 		Path : NSISTString;
+		InstallationType : TInstallationType;
 		Optimal : Boolean;
 		function Equals(Obj : TJavaInstallation) : boolean; overload;
 		function CalcScore : Integer;
@@ -82,6 +85,11 @@ type
 		ProductVersionMinor : Word;
 		ProductVersionRevision : Word;
 		ProductVersionBuild : Word;
+	end;
+
+	TNullableQWord = record
+		Valid : Boolean;
+		Value : QWord;
 	end;
 
 function IntToNStr(Value : QWord) : NSISTString; overload;
@@ -179,6 +187,7 @@ end;
 function TJavaInstallation.Equals(Obj : TJavaInstallation) : boolean;
 begin
 	Result := (Obj <> Nil) and (Version = Obj.Version) and (Build = Obj.Build) and
+		(InstallationType = Obj.InstallationType) and
 		(Optimal = Obj.Optimal) and EqualStr(Path, Obj.Path, False);
 end;
 
@@ -191,6 +200,7 @@ begin
 	if Path <> '' then Inc(Result, 5);
 	if Version > 0 then Inc(Result);
 	if Build > -1 then Inc(Result);
+	if InstallationType <> TInstallationType.UNKNOWN then Inc(Result);
 end;
 
 constructor TJavaInstallation.Create;
@@ -198,11 +208,21 @@ begin
 	Version := -1;
 	Build := -1;
 	Path := '';
+	InstallationType := TInstallationType.UNKNOWN;
 end;
 
 destructor TJavaInstallation.Destroy;
 begin
 	inherited Destroy;
+end;
+
+function InstallationTypeToStr(Const installationType : TInstallationType) : NSISTString;
+begin
+	case installationType of
+		TInstallationType.JDK : Result := NSISTString('JDK');
+		TInstallationType.JRE : Result := NSISTString('JRE');
+	else Result := NSISTString('Unknown');
+	end;
 end;
 
 function SystemErrorToStr(MessageId : DWORD) : NSISTString;
@@ -302,6 +322,54 @@ begin
 		end;
 	end;
 end;
+
+{$WARN 5058 off : Variable "$1" does not seem to be initialized}
+{$WARN 5060 off : Function result variable does not seem to be initialized}
+function GetRegInt(Const key : HKEY; Const valueName : NSISTString; Const Debug, DialogDebug : Boolean) : TNullableQWord;
+
+var
+	retVal : LONG;
+	dataType : DWORD;
+	ErrorMsg : NSISTString;
+	cbData : DWORD = 8;
+	data : array[0..7] of Byte;
+
+begin
+	FillChar(Result, SizeOf(Result), 0);
+	if key = 0 then Exit;
+{$IFDEF UNICODE}
+	retVal := RegQueryValueExW(key, LPWSTR(valueName), Nil, @dataType, @data, @cbData);
+{$ELSE}
+	retVal := RegQueryValueExA(key, LPCSTR(valueName), Nil, @dataType, @data, @cbData);
+{$ENDIF}
+	if retVal = ERROR_SUCCESS then begin
+		if (cbData > 0) and ((dataType = REG_DWORD) or (dataType = REG_DWORD_BIG_ENDIAN) or (dataType = REG_QWORD)) then begin
+			if (dataType = REG_QWORD) and (cbData = 8) then begin
+				Result.Value := PQWord(@data)^;
+				Result.Valid := True;
+			end
+			else if cbData = 4 then begin
+				if dataType = REG_DWORD_BIG_ENDIAN then Result.Value := SwapEndian(PDWORD(@data)^)
+				else Result.Value := PDWORD(@data)^;
+				Result.Valid := True;
+			end;
+		end;
+	end
+	else begin
+		if (retVal <> ERROR_FILE_NOT_FOUND) and (Debug or DialogDebug) then begin
+			ErrorMsg := SystemErrorToStr(retVal);
+			if Debug then LogMessage('Failed to get registry value "' + valueName + '" because: ' + ErrorMsg);
+			if DialogDebug then NSISDialog(
+				'Failed to get registry value "' + valueName + '" because: ' + ErrorMsg,
+				'Error',
+				MB_OK,
+				Error
+			);
+		end;
+	end;
+end;
+{$WARN 5058 on : Variable "$1" does not seem to be initialized}
+{$WARN 5060 on : Function result variable does not seem to be initialized}
 
 function GetRegString(const key : HKEY; const valueName : NSISTString; const Debug, DialogDebug : Boolean) : NSISTString;
 var
@@ -598,6 +666,124 @@ begin
 	end;
 end;
 
+function ParseZuluLiberica(hk : HKEY; Const samDesired : REGSAM; Const Debug, DialogDebug : Boolean) : TJavaInstallation;
+
+const
+	ZuluRE = '(?i)\s*zulu-(\d+)(?:-(jre))\s*';
+	LibericaRE = '(?i)\s*(jre|jdk)-(\d+)\s*';
+
+var
+	SubKeys : TNSISTStringList;
+	regExZulu, regExLiberica : TRegExpr;
+	i, Version : Integer;
+	InstallationType : TInstallationType;
+	hk2 : HKEY;
+	found : Boolean;
+	nQWord : TNullableQWord;
+	s : NSISTString;
+
+begin
+	Result := Nil;
+	SubKeys := EnumerateRegSubKeys(hk, Debug, DialogDebug);
+	try
+		if SubKeys.Count > 0 then begin
+			regExZulu := TRegExpr.Create;
+			regExLiberica := TRegExpr.Create;
+			try
+				regExZulu.Expression := ZuluRE;
+				regExLiberica.Expression := LibericaRE;
+				for i := 0 to SubKeys.Count - 1 do begin
+					InstallationType := TInstallationType.UNKNOWN;
+					found := False;
+					regExZulu.InputString := SubKeys[i];
+					if regExZulu.Exec then begin
+						Version := NStrToIntDef(regExZulu.Match[1], -1);
+						if regExZulu.Match[2] <> '' then InstallationType := TInstallationType.JRE
+						else InstallationType := TInstallationType.JDK;
+						found := True;
+					end
+					else begin
+						regExLiberica.InputString := SubKeys[i];
+						if regExLiberica.Exec then begin
+							Version := NStrToIntDef(regExZulu.Match[2], -1);
+							if EqualStr('jre', regExLiberica.Match[1], False) then InstallationType := TInstallationType.JRE
+							else if EqualStr('jdk', regExLiberica.Match[1], False) then InstallationType := TInstallationType.JDK;
+							found := True;
+						end;
+					end;
+
+					if found then begin
+						hk2 := OpenRegKey(hk, SubKeys[i], samDesired, Debug, DialogDebug);
+						if hk2 <> 0 then begin
+							try
+								s := GetRegString(hk2, 'InstallationPath', Debug, DialogDebug);
+								if s <> '' then Result := GetJavawInfo(s);
+								if Result <> Nil then begin
+									Result.InstallationType := InstallationType;
+									nQWord := GetRegInt(hk2, 'MajorVersion', Debug, DialogDebug);
+									if nQWord.Valid and (nQWord.Value > 0) then begin
+										if (Version > 0) and (nQWord.Value <> Version) then begin
+											if Debug then LogMessage(
+												'Parsed version (' + IntToNStr(Version) + ') and registry version (' +
+												IntToNStr(nQWord.Value) + ') differs - using registry version'
+											);
+											if DialogDebug then NSISDialog(
+												'Parsed version (' + IntToNStr(Version) + ') and registry version (' +
+												IntToNStr(nQWord.Value) + ') differs - using registry version',
+												'Warning',
+												MB_OK,
+												Warning
+											);
+											Version := nQWord.Value;
+										end;
+									end;
+									if (Version > 0) and (Version <> Result.Version) then begin
+										if Debug then LogMessage(
+											'Parsed/registry version (' + IntToNStr(Version) + ') and file version (' +
+											IntToNStr(Result.Version) + ') differs - using parsed/registry version'
+										);
+										if DialogDebug then NSISDialog(
+											'Parsed/registry version (' + IntToNStr(Version) + ') and file version (' +
+											IntToNStr(Result.Version) + ') differs - using parsed/registry version',
+											'Warning',
+											MB_OK,
+											Warning
+										);
+										Result.Version := Version;
+									end;
+
+									nQWord := GetRegInt(hk2, 'MinorVersion', Debug, DialogDebug);
+									if nQWord.Valid and (nQWord.Value > 0) and (nQWord.Value <> Result.Build) then begin
+										if Debug then LogMessage(
+											'Registry build (' + IntToNStr(nQWord.Value) + ') and file build (' +
+											IntToNStr(Result.Version) + ') differs - using registry build'
+										);
+										if DialogDebug then NSISDialog(
+											'Registry build (' + IntToNStr(nQWord.Value) + ') and file build (' +
+											IntToNStr(Result.Version) + ') differs - using registry build',
+											'Warning',
+											MB_OK,
+											Warning
+										);
+										Result.Build := nQWord.Value;
+									end;
+								end;
+							finally
+								RegCloseKey(hk2);
+							end;
+						end;
+					end;
+				end;
+			finally
+				regExZulu.Free;
+				regExLiberica.Free;
+			end;
+		end;
+	finally
+		SubKeys.Free;
+	end;
+end;
+
 procedure ProcessRegistry(const Is64 : Boolean; const Params : TParameters);
 
 const
@@ -624,6 +810,7 @@ begin
 			if h <> 0 then begin
 				try
 					Installation := ParseAdoptiumSemeru(h, samDesired, Params.IsLogging, Params.IsDialogDebug);
+					if Installation = Nil then Installation := ParseZuluLiberica(h, samDesired, Params.IsLogging, Params.IsDialogDebug);
 					RegCloseKey(h);
 					if Installation <> Nil then
 					begin
