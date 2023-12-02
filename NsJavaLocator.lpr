@@ -35,6 +35,7 @@ uses
 type
 	TNSISTStringList = class(TFPGList<NSISTString>);
 	TInstallationType = (JDK, JRE, UNKNOWN);
+	TArchitecture = (UNKNOWN, x86, x64, ia64);
 
 	{ TParameters }
 
@@ -68,6 +69,7 @@ type
 		Build : Integer;
 		Path : NSISTString;
 		InstallationType : TInstallationType;
+		Architecture : TArchitecture;
 		Optimal : Boolean;
 		function Equals(Obj : TJavaInstallation) : boolean; overload;
 		function CalcScore : Integer;
@@ -187,7 +189,7 @@ end;
 function TJavaInstallation.Equals(Obj : TJavaInstallation) : boolean;
 begin
 	Result := (Obj <> Nil) and (Version = Obj.Version) and (Build = Obj.Build) and
-		(InstallationType = Obj.InstallationType) and
+		(InstallationType = Obj.InstallationType) and (Architecture = Obj.Architecture) and
 		(Optimal = Obj.Optimal) and EqualStr(Path, Obj.Path, False);
 end;
 
@@ -201,6 +203,7 @@ begin
 	if Version > 0 then Inc(Result);
 	if Build > -1 then Inc(Result);
 	if InstallationType <> TInstallationType.UNKNOWN then Inc(Result);
+	if Architecture <> TArchitecture.UNKNOWN then Inc(Result);
 end;
 
 constructor TJavaInstallation.Create;
@@ -222,6 +225,26 @@ begin
 		TInstallationType.JDK : Result := NSISTString('JDK');
 		TInstallationType.JRE : Result := NSISTString('JRE');
 	else Result := NSISTString('Unknown');
+	end;
+end;
+
+function ArchitectureToStr(Const Architecture : TArchitecture; const BitsOnly : Boolean) : NSISTString;
+begin
+	if BitsOnly then begin
+		case Architecture of
+			TArchitecture.ia64 : Result := NSISTString('64');
+			TArchitecture.x64 : Result := NSISTString('64');
+			TArchitecture.x86 : Result := NSISTString('32');
+		else Result := NSISTString('');
+		end;
+	end
+	else begin
+		case Architecture of
+			TArchitecture.ia64 : Result := NSISTString('ia64');
+			TArchitecture.x64 : Result := NSISTString('x64');
+			TArchitecture.x86 : Result := NSISTString('x86');
+		else Result := NSISTString('Unknown');
+		end;
 	end;
 end;
 
@@ -531,6 +554,64 @@ begin
 	end;
 end;
 
+function ResolveJavawPath(Const Path : NSISTString) : NSISTString;
+
+begin
+	Result := Path;
+	if Path = '' then Exit;
+
+	if not EndsWith(NSISTString('javaw.exe'), Result, False) then begin
+		if EndsWith('bin', Result, False) then Result := Result + '\'
+		else if not EndsWith('bin\', Result, False) then begin
+			if EndsWith('\', Result, True) then Result := Result + 'bin\'
+			else Result := Result + '\bin\';
+		end;
+		Result := Result + 'javaw.exe';
+	end;
+end;
+
+function GetPEArchitecture(Path: NSISTString) : TArchitecture;
+
+var
+	h : HANDLE;
+	buffer : array[0..63] of Byte;
+	read : DWORD;
+	offset : PDWORD;
+	machineType : PWORD;
+
+begin
+	Result := TArchitecture.UNKNOWN;
+	if Path = '' then Exit;
+	UniqueString(Path);
+{$IFDEF UNICODE}
+	h := CreateFileW(PWideChar(Path), DWORD(GENERIC_READ), FILE_SHARE_READ, Nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+{$ELSE}
+	h := CreateFileA(PChar(Path), DWORD(GENERIC_READ), FILE_SHARE_READ, Nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+{$ENDIF}
+	if h = INVALID_HANDLE_VALUE then Exit;
+	try
+{$WARN 5057 off : Local variable "$1" does not seem to be initialized}
+		if not ReadFile(h, buffer, 64, read, Nil) then Exit; // Read error
+{$WARN 5057 on : Local variable "$1" does not seem to be initialized}
+		if read < 64 then Exit; // To small file
+		if (buffer[0] <> $4D) or (buffer[1] <> $5A) then Exit; // Missing the "MZ" magic bytes
+		offset := Pointer(@buffer) + $3C;
+		if offset^ < $40 then Exit; // Not the offset we're expecting
+		read := SetFilePointer(h, offset^, Nil, FILE_BEGIN);
+		if read = INVALID_SET_FILE_POINTER then Exit; // Seek failed
+		if not ReadFile(h, buffer, 6, read, Nil) then Exit; // Read error
+		if (buffer[0] <> 80) or (buffer[1] <> 69) or (buffer[2] <> 0) or (buffer[3] <> 0) then Exit; // Not a PE file
+		machineType := Pointer(@buffer) + 4;
+		case machineType^ of
+			$014C: Result := TArchitecture.x86; //x86 (32-bit)
+			$200: Result := TArchitecture.ia64; //Intel Itanium (64-bit)
+			$8664: Result := TArchitecture.x64; //x64 (64-bit)
+		end;
+	finally
+		CloseHandle(h);
+	end;
+end;
+
 {
 	Creates a TJavaInstallation instance if a valid result is found.
 	IE, Result must be Free'd if it's non-nil upon return.
@@ -543,15 +624,6 @@ var
 begin
 	Result := Nil;
 	if Path = '' then Exit;
-
-	if not EndsWith(NSISTString('javaw.exe'), Path, False) then begin
-		if EndsWith('bin', Path, False) then Path := Path + '\'
-		else if not EndsWith('bin\', Path, False) then begin
-			if EndsWith('\', Path, True) then Path := Path + 'bin\'
-			else Path := Path + '\bin\';
-		end;
-		Path := Path + 'javaw.exe';
-	end;
 
 	FileInfo := GetFileInfo(Path);
 	if FileInfo.Valid then begin
@@ -573,95 +645,112 @@ const
 	ModernJavaVersionRE = '\s*(\d+)\.(\d+)\.(\d+).*';
 
 var
-	SubKeys, SubKeys2, SubKeys3 : TNSISTStringList;
+	SubKeys, SubKeys2, SubKeys3, SubKeys4 : TNSISTStringList;
 	regEx : TRegExpr;
-	i, j, k, Version, Build : Integer;
-	hk2, hk3, hk4 : HKEY;
+	i, j, k, l, Version, Build : Integer;
+	hk2, hk3, hk4, hk5 : HKEY;
+	installationType : TInstallationType;
 	s : NSISTString;
 
 begin
 	Result := Nil;
 	SubKeys := EnumerateRegSubKeys(hk, Debug, DialogDebug);
+	regEx := TRegExpr.Create;
 	try
-		if SubKeys.Count > 0 then begin
-			regEx := TRegExpr.Create;
-			try
-				regEx.Expression := ModernJavaVersionRE;
-				for i := 0 to SubKeys.Count - 1 do begin
-					regEx.InputString := SubKeys[i];
-					if (regEx.Exec) and (regEx.Match[1] <> '1') then
-					begin
-						Version := NStrToIntDef(regEx.Match[1], -1);
-						Build := NStrToIntDef(regEx.Match[3], -1);
-						hk2 := OpenRegKey(hk, SubKeys[i], samDesired, Debug, DialogDebug);
-						if hk2 <> 0 then begin
-							SubKeys2 := EnumerateRegSubKeys(hk2, Debug, DialogDebug);
-							try
-								for j := 0 to SubKeys2.Count - 1 do begin
-									if EqualStr(SubKeys2[j], 'hotspot', False) or EqualStr(SubKeys2[j], 'openj9', False) then begin
-										hk3 := OpenRegKey(hk2, SubKeys2[j], samDesired, Debug, DialogDebug);
-										if hk3 <> 0 then begin
-											SubKeys3 := EnumerateRegSubKeys(hk3, Debug, DialogDebug);
-											try
-												k := SubKeys3.IndexOf('MSI');
-												if k >= 0 then begin
-													hk4 := OpenRegKey(hk3, SubKeys3[k], samDesired, Debug, DialogDebug);
-													if hk4 <> 0 then begin
-														s := GetRegString(hk4, 'Path', Debug, DialogDebug);
-														RegCloseKey(hk4);
-														Result := GetJavawInfo(s);
-														if Result <> Nil then begin
-															if (Version > 0) and (Version <> Result.Version) then begin
-																if Debug then LogMessage(
-																	'Parsed version (' + IntToStr(Version) + ') and file version (' +
-																	IntToStr(Result.Version) + ') differs - using parsed version'
-																);
-																if DialogDebug then NSISDialog(
-																	'Parsed version (' + IntToStr(Version) + ') and file version (' +
-																	IntToStr(Result.Version) + ') differs - using parsed version',
-																	'Warning',
-																	MB_OK,
-																	Warning
-																);
-																Result.Version := Version;
+		regEx.Expression := ModernJavaVersionRE;
+		for i := 0 to SubKeys.Count - 1 do begin
+			if EqualStr(SubKeys[i], 'JDK', False) then installationType := TInstallationType.JDK
+			else if EqualStr(SubKeys[i], 'JRE', False) then installationType := TInstallationType.JRE
+			else installationType := TInstallationType.UNKNOWN;
+			if installationType <> TInstallationType.UNKNOWN then begin
+				hk2 := OpenRegKey(hk, SubKeys[i], samDesired, Debug, DialogDebug);
+				SubKeys2 := EnumerateRegSubKeys(hk2, Debug, DialogDebug);
+				try
+					for j := 0 to SubKeys2.Count - 1 do begin
+						regEx.InputString := SubKeys2[j];
+						if (regEx.Exec) and (regEx.Match[1] <> '1') then begin
+							Version := NStrToIntDef(regEx.Match[1], -1);
+							Build := NStrToIntDef(regEx.Match[3], -1);
+							hk3 := OpenRegKey(hk2, SubKeys2[j], samDesired, Debug, DialogDebug);
+							if hk3 <> 0 then begin
+								SubKeys3 := EnumerateRegSubKeys(hk3, Debug, DialogDebug);
+								try
+									for k := 0 to SubKeys3.Count - 1 do begin
+										if EqualStr(SubKeys3[k], 'hotspot', False) or EqualStr(SubKeys3[k], 'openj9', False) then begin
+											hk4 := OpenRegKey(hk3, SubKeys3[k], samDesired, Debug, DialogDebug);
+											if hk4 <> 0 then begin
+												SubKeys4 := EnumerateRegSubKeys(hk4, Debug, DialogDebug);
+												try
+													l := SubKeys4.IndexOf('MSI');
+													if l >= 0 then begin
+														hk5 := OpenRegKey(hk4, SubKeys4[l], samDesired, Debug, DialogDebug);
+														if hk5 <> 0 then begin
+															try
+																s := GetRegString(hk5, 'Path', Debug, DialogDebug);
+															finally
+																RegCloseKey(hk5);
+															end;
+															if s <> '' then begin
+																s := ResolveJavawPath(s);
+																Result := GetJavawInfo(s);
+															end;
+															if Result <> Nil then begin
+																if (Version > 0) and (Version <> Result.Version) then begin
+																	if Debug then LogMessage(
+																		'Parsed version (' + IntToNStr(Version) + ') and file version (' +
+																		IntToNStr(Result.Version) + ') differs - using parsed version'
+																	);
+																	if DialogDebug then NSISDialog(
+																		'Parsed version (' + IntToNStr(Version) + ') and file version (' +
+																		IntToNStr(Result.Version) + ') differs - using parsed version',
+																		'Warning',
+																		MB_OK,
+																		Warning
+																	);
+																	Result.Version := Version;
+																end;
+																if (Build > -1) and (Build <> Result.Build) then begin
+																	if Debug then LogMessage(
+																		'Parsed build (' + IntToNStr(Version) + ') and file build (' +
+																		IntToNStr(Result.Version) + ') differs - using parsed build'
+																	);
+																	if DialogDebug then NSISDialog(
+																		'Parsed build (' + IntToNStr(Version) + ') and file build (' +
+																		IntToNStr(Result.Version) + ') differs - using parsed build',
+																		'Warning',
+																		MB_OK,
+																		Warning
+																	);
+																	Result.Build := Build;
+																end;
+																Result.InstallationType := installationType;
+																Result.Architecture := GetPEArchitecture(s);
+																Exit;
 															end;
 														end;
-														if (Build > -1) and (Build <> Result.Build) then begin
-															if Debug then LogMessage(
-																'Parsed build (' + IntToStr(Version) + ') and file build (' +
-																IntToStr(Result.Version) + ') differs - using parsed build'
-															);
-															if DialogDebug then NSISDialog(
-																'Parsed build (' + IntToStr(Version) + ') and file build (' +
-																IntToStr(Result.Version) + ') differs - using parsed build',
-																'Warning',
-																MB_OK,
-																Warning
-															);
-															Result.Build := Build;
-														end;
-														Exit;
 													end;
+												finally
+													SubKeys4.Free;
+													RegCloseKey(hk4);
 												end;
-											finally
-												SubKeys3.Free;
-												RegCloseKey(hk3);
 											end;
 										end;
 									end;
+								finally
+									SubKeys3.Free;
+									RegCloseKey(hk3);
 								end;
-							finally
-								SubKeys2.Free;
-								RegCloseKey(hk2);
 							end;
 						end;
 					end;
+				finally
+					SubKeys2.Free;
+					RegCloseKey(hk2);
 				end;
-			finally
-				regEx.Free;
 			end;
 		end;
 	finally
+		regEx.Free;
 		SubKeys.Free;
 	end;
 end;
@@ -717,7 +806,10 @@ begin
 						if hk2 <> 0 then begin
 							try
 								s := GetRegString(hk2, 'InstallationPath', Debug, DialogDebug);
-								if s <> '' then Result := GetJavawInfo(s);
+								if s <> '' then begin
+									s := ResolveJavawPath(s);
+									Result := GetJavawInfo(s);
+								end;
 								if Result <> Nil then begin
 									Result.InstallationType := InstallationType;
 									nQWord := GetRegInt(hk2, 'MajorVersion', Debug, DialogDebug);
@@ -767,6 +859,7 @@ begin
 										);
 										Result.Build := nQWord.Value;
 									end;
+									Result.Architecture := GetPEArchitecture(s);
 								end;
 							finally
 								RegCloseKey(hk2);
