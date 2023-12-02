@@ -877,6 +877,26 @@ begin
 	end;
 end;
 
+{
+	Since TFGObjectLIst isn't made to be subclassed, this is a "quick and dirty" way to ensure item uniqueness.
+	Returns True if actually added.
+}
+function AddInstallationIfUnique(const Installation : TJavaInstallation; var Installations : TFPGObjectList<TJavaInstallation>) : Boolean;
+
+var
+	i : Integer;
+
+begin
+	Result := False;
+	if (Installation = Nil) or (Installations = Nil) then Exit;
+
+	for i := 0 to Installations.Count - 1 do begin
+		if Installations[i].Equals(Installation) then Exit;
+	end;
+	Installations.Add(Installation);
+	Result := True;
+end;
+
 procedure ProcessRegistry(const Is64 : Boolean; const Params : TParameters);
 
 const
@@ -888,8 +908,10 @@ var
 	samDesired : REGSAM = baseSamDesired;
 	subKey : NSISTString;
 	Installation : TJavaInstallation;
+	Installations : TFPGObjectList<TJavaInstallation>;
 
 begin
+	Installations := TFPGObjectList<TJavaInstallation>.Create(True);
 	repeat
 		if (run = 0) or (run = 2) then rootKey :=  HKEY_LOCAL_MACHINE
 		else rootKey := HKEY_CURRENT_USER;
@@ -904,11 +926,11 @@ begin
 				try
 					Installation := ParseAdoptiumSemeru(h, samDesired, Params.IsLogging, Params.IsDialogDebug);
 					if Installation = Nil then Installation := ParseZuluLiberica(h, samDesired, Params.IsLogging, Params.IsDialogDebug);
-					RegCloseKey(h);
-					if Installation <> Nil then
-					begin
-					end;
 				finally
+					RegCloseKey(h);
+				end;
+				if Installation <> Nil then begin
+					if not AddInstallationIfUnique(Installation, Installations) then Installation.Free;
 				end;
 			end;
 		end;
