@@ -16,7 +16,6 @@ library NsJavaLocator;
 }
 
 {$MODE Delphi}
-{$SCOPEDENUMS ON}
 {$WARN 6058 off : Call to subroutine "$1" marked as inline is not inlined}
 {$WARN 3123 off : "$1" not yet supported inside inline procedure/function}
 {$WARN 3124 off : Inlining disabled}
@@ -30,33 +29,31 @@ uses
 	Classes,
 	RegExpr,
 	fgl,
-	NSIS in 'NSIS.pas';
+	NSIS,
+	Utils;
 
 type
-	TNSISTStringList = class(TFPGList<NSISTString>);
-	TInstallationType = (JDK, JRE, UNKNOWN);
-	TArchitecture = (UNKNOWN, x86, x64, ia64);
 
 	{ TParameters }
 
 	TParameters = class(TObject)
 	private
-		FRegistryPaths : TNSISTStringList;
-		FFilePaths : TNSISTStringList;
+		FRegistryPaths : TVStringList;
+		FFilePaths : TVStringList;
 		FIsLogging : Boolean;
 		FIsDialogDebug : Boolean;
-		function ReadParams() : TNSISTStringList;
+		function ReadParams() : TVStringList;
 		function GetLogging() : Boolean;
 		function GetDialogDebug() : Boolean;
 	public
-		function GetRegistryPaths() : TNSISTStringList;
-		function GetFilePaths() : TNSISTStringList;
+		function GetRegistryPaths() : TVStringList;
+		function GetFilePaths() : TVStringList;
 		procedure ParseParams();
 		constructor Create();
 		destructor Destroy(); override;
 	published
-		property RegistryPaths : TNSISTStringList read GetRegistryPaths;
-		property Filepaths : TNSISTStringList read GetFilePaths;
+		property RegistryPaths : TVStringList read GetRegistryPaths;
+		property FilePaths : TVStringList read GetFilePaths;
 		property IsLogging : Boolean read GetLogging;
 		property IsDialogDebug : Boolean read GetDialogDebug;
 	end;
@@ -67,7 +64,7 @@ type
 	public
 		Version : Integer;
 		Build : Integer;
-		Path : NSISTString;
+		Path : VString;
 		InstallationType : TInstallationType;
 		Architecture : TArchitecture;
 		Optimal : Boolean;
@@ -76,113 +73,6 @@ type
 		constructor Create;
 		destructor Destroy; override;
 	end;
-
-	TFileInfo = record
-		Valid : Boolean;
-		FileVersionMajor : Word;
-		FileVersionMinor : Word;
-		FileVersionRevision : Word;
-		FileVersionBuild : Word;
-		ProductVersionMajor : Word;
-		ProductVersionMinor : Word;
-		ProductVersionRevision : Word;
-		ProductVersionBuild : Word;
-	end;
-
-	TNullableQWord = record
-		Valid : Boolean;
-		Value : QWord;
-	end;
-
-function IntToNStr(Value : QWord) : NSISTString; overload;
-begin
-	Result := NSISTString(IntToStr(Value));
-end;
-
-function IntToNStr(Value : Int64) : NSISTString; overload;
-begin
-	Result := NSISTString(IntToStr(Value));
-end;
-
-function IntToNStr(Value : LongInt) : NSISTString; overload;
-begin
-	Result := NSISTString(IntToStr(Value));
-end;
-
-function UIntToNStr(Value : QWord) : NSISTString; overload;
-begin
-	Result := NSISTString(UIntToStr(Value));
-end;
-
-function UIntToNStr(Value : Cardinal) : NSISTString; overload;
-begin
-	Result := NSISTString(UIntToStr(Value));
-end;
-
-function NStrToIntDef(const ns : NSISTString; Default : LongInt) : LongInt;
-
-var
-	Error : word;
-
-begin
-	Val(ns, Result, Error);
-	if Error <> 0 then Result := Default;
-end;
-
-function EqualStr(str1, str2 : NSISTString; CaseSensitive : Boolean = true) : Boolean;
-
-var
-	len, i : Integer;
-
-begin
-	Result := False;
-	len := Length(str2);
-	if len <> Length(str1) then Exit;
-	if len = 0 then begin
-		Result := True;
-		Exit;
-	end;
-	if CaseSensitive then begin
-		for i := 1 to len do if str2[i] <> str1[i] then Exit;
-		Result := true;
-	end
-	else begin
-		UniqueString(str1);
-		UniqueString(str2);
-{$IFDEF UNICODE}
-		Result := lstrcmpiW(LPCWSTR(str2), LPCWSTR(str1)) = 0;
-{$ELSE}
-		Result := lstrcmpiA(LPCSTR(str2), LPCSTR(str1)) = 0;
-{$ENDIF}
-	end;
-end;
-
-function EndsWith(subStr : NSISTString; Const str : NSISTString; CaseSensitive : Boolean = true) : Boolean;
-
-var
-	subLen, len, offset, i : Integer;
-	endStr : NSISTString;
-
-begin
-	Result := False;
-	subLen := Length(subStr);
-	len := Length(str);
-	if (subLen = 0) or (len = 0) or (len < subLen) then Exit;
-	if CaseSensitive then begin
-		offset := len - subLen;
-		for i := 1 to subLen do if str[offset + i] <> subStr[i] then Exit;
-		Result := true;
-	end
-	else begin
-		UniqueString(subStr);
-		endStr := Copy(str, len - subLen + 1, subLen);
-{$IFDEF UNICODE}
-		Result := lstrcmpiW(LPCWSTR(endStr), LPCWSTR(subStr)) = 0;
-{$ELSE}
-		Result := lstrcmpiA(LPCSTR(endStr), LPCSTR(subStr)) = 0;
-{$ENDIF}
-	end;
-end;
 
 { TJavaInstallation }
 
@@ -219,348 +109,53 @@ begin
 	inherited Destroy;
 end;
 
-function InstallationTypeToStr(Const installationType : TInstallationType) : NSISTString;
-begin
-	case installationType of
-		TInstallationType.JDK : Result := NSISTString('JDK');
-		TInstallationType.JRE : Result := NSISTString('JRE');
-	else Result := NSISTString('Unknown');
-	end;
-end;
+{
+	Since TFGObjectLIst isn't made to be subclassed, these methods are a "quick and dirty" way to ensure item uniqueness.
+}
+function GetInstallationWithPathIdx(const Path : VString; const Installations : TFPGObjectList<TJavaInstallation>) : Integer;
 
-function ArchitectureToStr(Const Architecture : TArchitecture; const BitsOnly : Boolean) : NSISTString;
+var
+	i : Integer;
+
 begin
-	if BitsOnly then begin
-		case Architecture of
-			TArchitecture.ia64 : Result := NSISTString('64');
-			TArchitecture.x64 : Result := NSISTString('64');
-			TArchitecture.x86 : Result := NSISTString('32');
-		else Result := NSISTString('');
-		end;
-	end
-	else begin
-		case Architecture of
-			TArchitecture.ia64 : Result := NSISTString('ia64');
-			TArchitecture.x64 : Result := NSISTString('x64');
-			TArchitecture.x86 : Result := NSISTString('x86');
-		else Result := NSISTString('Unknown');
+	Result := -1;
+	if (Path = '') or (Installations = Nil) then Exit;
+
+	for i := 0 to Installations.Count - 1 do begin
+		if EqualStr(Installations[i].Path, Path, False) then begin
+			Result := i;
+			Exit;
 		end;
 	end;
 end;
 
-function SystemErrorToStr(MessageId : DWORD) : NSISTString;
-
-var
-	len, newLen : DWORD;
-{$IFDEF UNICODE}
-	lpBuffer : LPWSTR;
-{$ELSE}
-	lpBuffer : LPSTR;
-{$ENDIF}
-
-begin
-	Result := '';
-{$IFDEF UNICODE}
-	len := FormatMessageW(
-		FORMAT_MESSAGE_ALLOCATE_BUFFER or FORMAT_MESSAGE_FROM_SYSTEM or FORMAT_MESSAGE_IGNORE_INSERTS,
-		Nil,
-		MessageId,
-		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-		PWideChar(@lpBuffer),
-		0,
-		Nil
-	);
-{$ELSE}
-	len := FormatMessageA(
-		FORMAT_MESSAGE_ALLOCATE_BUFFER or FORMAT_MESSAGE_FROM_SYSTEM or FORMAT_MESSAGE_IGNORE_INSERTS,
-		Nil,
-		MessageId,
-		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-		PChar(@lpBuffer),
-		0,
-		Nil
-	);
-{$ENDIF}
-	if len > 0 then begin
-		Result := lpBuffer;
-
-		// Remove trailing newlines
-		newLen := len;
-		if (newLen > 1) and (Result[newLen - 1] = #13) and (Result[len] = #10) then
-			Dec(newLen, 2);
-		SetLength(Result, newLen);
-	end;
-	LocalFree(HLOCAL(lpBuffer));
-end;
-
-function IsWOW64 : Boolean;
-
-var
-	module : HModule;
-	s : RawByteString;
-	ptr : FARPROC;
-	res : BOOL;
+{
+	Returns True if actually added.
+}
+function AddInstallationIfUnique(const Installation : TJavaInstallation; const Installations : TFPGObjectList<TJavaInstallation>) : Boolean;
 
 begin
 	Result := False;
-	s := 'kernel32';
-	module := GetModuleHandleA(PChar(s));
-	s := 'IsWow64Process';
-	ptr := GetProcAddress(module, PChar(s));
-	if @ptr <> Nil then begin
-		// IsWow64Process exists, so we're potentially running on 64-bit
-		if IsWow64Process(GetCurrentProcess, @res) then Result := res
-		else NSISDialog('Failed to query IsWow64Process', 'Error', MB_OK);
-	end;
+	if (Installation = Nil) or (Installations = Nil) or (Installation.Path = '') then Exit;
+
+	if GetInstallationWithPathIdx(Installation.Path, Installations) >= 0 then Exit;
+	Installations.Add(Installation);
+	Result := True;
 end;
 
-function OpenRegKey(Const rootKey : HKEY; Const subKey : NSISTString; samDesired : REGSAM; Const Debug, DialogDebug : Boolean) : HKEY;
-
-var
-	retVal : LongInt;
-	ErrorMsg : NSISTString;
+function InstallationPathExists(const Path : VString; const Installations : TFPGObjectList<TJavaInstallation>) : Boolean;
 
 begin
-	if rootKey = 0 then begin
-		Result := 0;
-		Exit;
-	end;
-{$IFDEF UNICODE}
-	retVal := RegOpenKeyExW(rootKey, LPWSTR(subKey), 0, samDesired, @Result);
-{$ELSE}
-	retVal := RegOpenKeyExA(rootKey, LPCSTR(subKey), 0, samDesired, @Result);
-{$ENDIF}
-
-	if retVal <> ERROR_SUCCESS then begin
-		Result := 0;
-		if (retVal <> ERROR_FILE_NOT_FOUND) and (Debug or DialogDebug) then begin
-			ErrorMsg := SystemErrorToStr(retVal);
-			if Debug then LogMessage('Failed to open registry key "' + subkey + '" because: ' + ErrorMsg);
-			if DialogDebug then NSISDialog(
-				'Failed to open registry key "' + subkey + '" because: ' + ErrorMsg,
-				'Error',
-				MB_OK,
-				Error
-			);
-		end;
-	end;
+	Result := GetInstallationWithPathIdx(Path, Installations) >= 0;
 end;
 
-{$WARN 5058 off : Variable "$1" does not seem to be initialized}
-{$WARN 5060 off : Function result variable does not seem to be initialized}
-function GetRegInt(Const key : HKEY; Const valueName : NSISTString; Const Debug, DialogDebug : Boolean) : TNullableQWord;
-
-var
-	retVal : LONG;
-	dataType : DWORD;
-	ErrorMsg : NSISTString;
-	cbData : DWORD = 8;
-	data : array[0..7] of Byte;
-
-begin
-	FillChar(Result, SizeOf(Result), 0);
-	if key = 0 then Exit;
-{$IFDEF UNICODE}
-	retVal := RegQueryValueExW(key, LPWSTR(valueName), Nil, @dataType, @data, @cbData);
-{$ELSE}
-	retVal := RegQueryValueExA(key, LPCSTR(valueName), Nil, @dataType, @data, @cbData);
-{$ENDIF}
-	if retVal = ERROR_SUCCESS then begin
-		if (cbData > 0) and ((dataType = REG_DWORD) or (dataType = REG_DWORD_BIG_ENDIAN) or (dataType = REG_QWORD)) then begin
-			if (dataType = REG_QWORD) and (cbData = 8) then begin
-				Result.Value := PQWord(@data)^;
-				Result.Valid := True;
-			end
-			else if cbData = 4 then begin
-				if dataType = REG_DWORD_BIG_ENDIAN then Result.Value := SwapEndian(PDWORD(@data)^)
-				else Result.Value := PDWORD(@data)^;
-				Result.Valid := True;
-			end;
-		end;
-	end
-	else begin
-		if (retVal <> ERROR_FILE_NOT_FOUND) and (Debug or DialogDebug) then begin
-			ErrorMsg := SystemErrorToStr(retVal);
-			if Debug then LogMessage('Failed to get registry value "' + valueName + '" because: ' + ErrorMsg);
-			if DialogDebug then NSISDialog(
-				'Failed to get registry value "' + valueName + '" because: ' + ErrorMsg,
-				'Error',
-				MB_OK,
-				Error
-			);
-		end;
-	end;
-end;
-{$WARN 5058 on : Variable "$1" does not seem to be initialized}
-{$WARN 5060 on : Function result variable does not seem to be initialized}
-
-function GetRegString(const key : HKEY; const valueName : NSISTString; const Debug, DialogDebug : Boolean) : NSISTString;
-var
-	retVal : LONG;
-	dataType : DWORD;
-	ErrorMsg : NSISTString;
-{$IFDEF UNICODE}
-	cbData : DWORD = 2050;
-	data : array[0..1024] of WideChar;
-{$ELSE}
-	cbData : DWORD = 1025;
-	data : array[0..1024] of Char;
-{$ENDIF}
-
-begin
-	Result := '';
-	if key = 0 then Exit;
-{$IFDEF UNICODE}
-	retVal := RegQueryValueExW(key, LPWSTR(valueName), Nil, @dataType, @data, @cbData);
-{$ELSE}
-	retVal := RegQueryValueExA(key, LPCSTR(valueName), Nil, @dataType, @data, @cbData);
-{$ENDIF}
-	if retVal = ERROR_SUCCESS then begin
-		if (dataType = REG_SZ) and (cbData > 0) then begin
-{$IFDEF UNICODE}
-			if (cbData > 1) and (data[(cbData div 2) - 1] <> WideChar(#0)) then begin
-				if cbData > 2048 then begin
-					data[1024] := WideChar(#0);
-					cbData := 2050;
-				end
-				else data[cbData div 2] := WideChar(#0);
-			end;
-			Result := PWideChar(data);
-{$ELSE}
-			if data[cbData - 1] <> #0 then begin
-				if cbData > 1024 then begin
-					data[1024] := #0;
-					cbData := 1025;
-				end
-				else data[cbData] := #0;
-				Result := PChar(data);
-			end;
-{$ENDIF}
-		end;
-	end
-	else begin
-		if (retVal <> ERROR_FILE_NOT_FOUND) and (Debug or DialogDebug) then begin
-			ErrorMsg := SystemErrorToStr(retVal);
-			if Debug then LogMessage('Failed to get registry value "' + valueName + '" because: ' + ErrorMsg);
-			if DialogDebug then NSISDialog(
-				'Failed to get registry value "' + valueName + '" because: ' + ErrorMsg,
-				'Error',
-				MB_OK,
-				Error
-			);
-		end;
-	end;
-end;
-
-function EnumerateRegSubKeys(const key : HKEY; Const Debug, DialogDebug : Boolean) : TNSISTStringList;
-
-var
-	subKeys : DWORD = 0;
-	lpcchName : DWORD;
-	retVal : LONG;
-	ErrorMsg : NSISTString;
-	i : Integer;
-{$IFDEF UNICODE}
-	lpName : PWideChar;
-{$ELSE}
-	lpName : PChar;
-{$ENDIF}
-
-begin
-	Result := TNSISTStringList.Create;
-	if key = 0 then Exit;
-	retVal := RegQueryInfoKeyA(key, Nil, Nil, Nil, @subKeys, Nil, Nil, Nil, Nil, Nil, Nil, Nil);
-	if retVal <> ERROR_SUCCESS then begin
-		if Debug or DialogDebug then begin
-			ErrorMsg := SystemErrorToStr(retVal);
-			if Debug then LogMessage('Failed to enumerate registry sub keys: ' + ErrorMsg);
-			if DialogDebug then NSISDialog('Failed to enumerate registry sub keys: ' + ErrorMsg, 'Error', MB_OK, Error);
-		end;
-	end
-	else if (subKeys > 0) then begin
-{$IFDEF UNICODE}
-		lpName :=  WideStrAlloc(255);
-{$ELSE}
-		lpName := StrAlloc(255);
-{$ENDIF}
-		for i := 0 to subKeys - 1 do begin
-			lpcchName := 255;
-{$IFDEF UNICODE}
-			retVal := RegEnumKeyExW(key, i, PUnicodeChar(lpName), lpcchName, Nil, Nil, Nil, Nil);
-			if retVal = ERROR_SUCCESS then begin
-				Result.Add(lpName);
-			end
-{$ELSE}
-			retVal := RegEnumKeyExA(key, i, PChar(lpName), lpcchName, Nil, Nil, Nil, Nil);
-			if retVal = ERROR_SUCCESS then begin
-				Result.Add(lpName);
-			end
-{$ENDIF}
-			else if retVal = ERROR_NO_MORE_ITEMS then break
-			else begin
-				if Debug or DialogDebug then begin
-					ErrorMsg := SystemErrorToStr(retVal);
-					if Debug then LogMessage('Failed to retrieve registry sub key name: ' + ErrorMsg);
-					if DialogDebug then NSISDialog('Failed to retrieve registry sub key name: ' + ErrorMsg, 'Error', MB_OK, Error);
-				end;
-			end;
-		end;
-		StrDispose(lpName);
-	end;
-end;
-
-function GetFileInfo(Path : NSISTString) : TFileInfo;
-
-var
-	size, dwHandle, valueSize : DWORD;
-	buffer : Pointer;
-	value : PVSFixedFileInfo;
-
-begin
-{$WARN 5060 off : Function result variable does not seem to be initialized}
-	FillChar(Result, sizeof(Result), 0);
-{$WARN 5060 on : Function result variable does not seem to be initialized}
-	UniqueString(Path);
-{$IFDEF UNICODE}
-	size := GetFileVersionInfoSizeW(LPWSTR(Path), @dwHandle);
-{$ELSE}
-	size := GetFileVersionInfoSizeA(LPCSTR(Path), @dwHandle);
-{$ENDIF}
-	if size = 0 then Exit;
-	GetMem(buffer, size);
-	try
-{$IFDEF UNICODE}
-		if GetFileVersionInfoW(PWideChar(Path), dwHandle, size, buffer) then
-{$ELSE}
-		if GetFileVersionInfoA(PChar(Path), dwHandle, size, buffer) then
-{$ENDIF}
-		begin
-{$WARN 5057 off : Local variable "$1" does not seem to be initialized}
-			if VerQueryValueA(buffer, '\', value, valueSize) then begin
-{$WARN 5057 on : Local variable "$1" does not seem to be initialized}
-				Result.FileVersionMajor := (value^.dwFileVersionMS and $ffff0000) shr 16;
-				Result.FileVersionMinor := value^.dwFileVersionMS and $ffff;
-				Result.FileVersionRevision := (value^.dwFileVersionLS and $ffff0000) shr 16;
-				Result.FileVersionBuild := value^.dwFileVersionLS and $ffff;
-				Result.ProductVersionMajor := (value^.dwProductVersionMS and $ffff0000) shr 16;
-				Result.ProductVersionMinor := value^.dwProductVersionMS and $ffff;
-				Result.ProductVersionRevision := (value^.dwProductVersionLS and $ffff0000) shr 16;
-				Result.ProductVersionBuild := value^.dwProductVersionLS and $ffff;
-				Result.Valid := True;
-			end;
-		end;
-	finally
-		Freemem(buffer);
-	end;
-end;
-
-function ResolveJavawPath(Const Path : NSISTString) : NSISTString;
+function ResolveJavawPath(Const Path : VString) : VString;
 
 begin
 	Result := Path;
 	if Path = '' then Exit;
 
-	if not EndsWith(NSISTString('javaw.exe'), Result, False) then begin
+	if not EndsWith('javaw.exe', Result, False) then begin
 		if EndsWith('bin', Result, False) then Result := Result + '\'
 		else if not EndsWith('bin\', Result, False) then begin
 			if EndsWith('\', Result, True) then Result := Result + 'bin\'
@@ -570,53 +165,11 @@ begin
 	end;
 end;
 
-function GetPEArchitecture(Path: NSISTString) : TArchitecture;
-
-var
-	h : HANDLE;
-	buffer : array[0..63] of Byte;
-	read : DWORD;
-	offset : PDWORD;
-	machineType : PWORD;
-
-begin
-	Result := TArchitecture.UNKNOWN;
-	if Path = '' then Exit;
-	UniqueString(Path);
-{$IFDEF UNICODE}
-	h := CreateFileW(PWideChar(Path), DWORD(GENERIC_READ), FILE_SHARE_READ, Nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-{$ELSE}
-	h := CreateFileA(PChar(Path), DWORD(GENERIC_READ), FILE_SHARE_READ, Nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-{$ENDIF}
-	if h = INVALID_HANDLE_VALUE then Exit;
-	try
-{$WARN 5057 off : Local variable "$1" does not seem to be initialized}
-		if not ReadFile(h, buffer, 64, read, Nil) then Exit; // Read error
-{$WARN 5057 on : Local variable "$1" does not seem to be initialized}
-		if read < 64 then Exit; // To small file
-		if (buffer[0] <> $4D) or (buffer[1] <> $5A) then Exit; // Missing the "MZ" magic bytes
-		offset := Pointer(@buffer) + $3C;
-		if offset^ < $40 then Exit; // Not the offset we're expecting
-		read := SetFilePointer(h, offset^, Nil, FILE_BEGIN);
-		if read = INVALID_SET_FILE_POINTER then Exit; // Seek failed
-		if not ReadFile(h, buffer, 6, read, Nil) then Exit; // Read error
-		if (buffer[0] <> 80) or (buffer[1] <> 69) or (buffer[2] <> 0) or (buffer[3] <> 0) then Exit; // Not a PE file
-		machineType := Pointer(@buffer) + 4;
-		case machineType^ of
-			$014C: Result := TArchitecture.x86; //x86 (32-bit)
-			$200: Result := TArchitecture.ia64; //Intel Itanium (64-bit)
-			$8664: Result := TArchitecture.x64; //x64 (64-bit)
-		end;
-	finally
-		CloseHandle(h);
-	end;
-end;
-
 {
 	Creates a TJavaInstallation instance if a valid result is found.
 	IE, Result must be Free'd if it's non-nil upon return.
 }
-function GetJavawInfo(Path : NSISTString) : TJavaInstallation;
+function GetJavawInfo(Path : VString) : TJavaInstallation;
 
 var
 	FileInfo : TFileInfo;
@@ -645,12 +198,12 @@ const
 	ModernJavaVersionRE = '\s*(\d+)\.(\d+)\.(\d+).*';
 
 var
-	SubKeys, SubKeys2, SubKeys3, SubKeys4 : TNSISTStringList;
+	SubKeys, SubKeys2, SubKeys3, SubKeys4 : TVStringList;
 	regEx : TRegExpr;
 	i, j, k, l, Version, Build : Integer;
 	hk2, hk3, hk4, hk5 : HKEY;
 	installationType : TInstallationType;
-	s : NSISTString;
+	s : VString;
 
 begin
 	Result := Nil;
@@ -669,8 +222,8 @@ begin
 					for j := 0 to SubKeys2.Count - 1 do begin
 						regEx.InputString := SubKeys2[j];
 						if (regEx.Exec) and (regEx.Match[1] <> '1') then begin
-							Version := NStrToIntDef(regEx.Match[1], -1);
-							Build := NStrToIntDef(regEx.Match[3], -1);
+							Version := VStrToIntDef(regEx.Match[1], -1);
+							Build := VStrToIntDef(regEx.Match[3], -1);
 							hk3 := OpenRegKey(hk2, SubKeys2[j], samDesired, Debug, DialogDebug);
 							if hk3 <> 0 then begin
 								SubKeys3 := EnumerateRegSubKeys(hk3, Debug, DialogDebug);
@@ -697,12 +250,12 @@ begin
 															if Result <> Nil then begin
 																if (Version > 0) and (Version <> Result.Version) then begin
 																	if Debug then LogMessage(
-																		'Parsed version (' + IntToNStr(Version) + ') and file version (' +
-																		IntToNStr(Result.Version) + ') differs - using parsed version'
+																		'Parsed version (' + IntToVStr(Version) + ') and file version (' +
+																		IntToVStr(Result.Version) + ') differs - using parsed version'
 																	);
 																	if DialogDebug then NSISDialog(
-																		'Parsed version (' + IntToNStr(Version) + ') and file version (' +
-																		IntToNStr(Result.Version) + ') differs - using parsed version',
+																		'Parsed version (' + IntToVStr(Version) + ') and file version (' +
+																		IntToVStr(Result.Version) + ') differs - using parsed version',
 																		'Warning',
 																		MB_OK,
 																		Warning
@@ -711,12 +264,12 @@ begin
 																end;
 																if (Build > -1) and (Build <> Result.Build) then begin
 																	if Debug then LogMessage(
-																		'Parsed build (' + IntToNStr(Version) + ') and file build (' +
-																		IntToNStr(Result.Version) + ') differs - using parsed build'
+																		'Parsed build (' + IntToVStr(Version) + ') and file build (' +
+																		IntToVStr(Result.Version) + ') differs - using parsed build'
 																	);
 																	if DialogDebug then NSISDialog(
-																		'Parsed build (' + IntToNStr(Version) + ') and file build (' +
-																		IntToNStr(Result.Version) + ') differs - using parsed build',
+																		'Parsed build (' + IntToVStr(Version) + ') and file build (' +
+																		IntToVStr(Result.Version) + ') differs - using parsed build',
 																		'Warning',
 																		MB_OK,
 																		Warning
@@ -762,14 +315,14 @@ const
 	LibericaRE = '(?i)\s*(jre|jdk)-(\d+)\s*';
 
 var
-	SubKeys : TNSISTStringList;
+	SubKeys : TVStringList;
 	regExZulu, regExLiberica : TRegExpr;
 	i, Version : Integer;
 	InstallationType : TInstallationType;
 	hk2 : HKEY;
 	found : Boolean;
 	nQWord : TNullableQWord;
-	s : NSISTString;
+	s : VString;
 
 begin
 	Result := Nil;
@@ -786,7 +339,7 @@ begin
 					found := False;
 					regExZulu.InputString := SubKeys[i];
 					if regExZulu.Exec then begin
-						Version := NStrToIntDef(regExZulu.Match[1], -1);
+						Version := VStrToIntDef(regExZulu.Match[1], -1);
 						if regExZulu.Match[2] <> '' then InstallationType := TInstallationType.JRE
 						else InstallationType := TInstallationType.JDK;
 						found := True;
@@ -794,7 +347,7 @@ begin
 					else begin
 						regExLiberica.InputString := SubKeys[i];
 						if regExLiberica.Exec then begin
-							Version := NStrToIntDef(regExZulu.Match[2], -1);
+							Version := VStrToIntDef(regExZulu.Match[2], -1);
 							if EqualStr('jre', regExLiberica.Match[1], False) then InstallationType := TInstallationType.JRE
 							else if EqualStr('jdk', regExLiberica.Match[1], False) then InstallationType := TInstallationType.JDK;
 							found := True;
@@ -816,12 +369,12 @@ begin
 									if nQWord.Valid and (nQWord.Value > 0) then begin
 										if (Version > 0) and (nQWord.Value <> Version) then begin
 											if Debug then LogMessage(
-												'Parsed version (' + IntToNStr(Version) + ') and registry version (' +
-												IntToNStr(nQWord.Value) + ') differs - using registry version'
+												'Parsed version (' + IntToVStr(Version) + ') and registry version (' +
+												IntToVStr(nQWord.Value) + ') differs - using registry version'
 											);
 											if DialogDebug then NSISDialog(
-												'Parsed version (' + IntToNStr(Version) + ') and registry version (' +
-												IntToNStr(nQWord.Value) + ') differs - using registry version',
+												'Parsed version (' + IntToVStr(Version) + ') and registry version (' +
+												IntToVStr(nQWord.Value) + ') differs - using registry version',
 												'Warning',
 												MB_OK,
 												Warning
@@ -831,12 +384,12 @@ begin
 									end;
 									if (Version > 0) and (Version <> Result.Version) then begin
 										if Debug then LogMessage(
-											'Parsed/registry version (' + IntToNStr(Version) + ') and file version (' +
-											IntToNStr(Result.Version) + ') differs - using parsed/registry version'
+											'Parsed/registry version (' + IntToVStr(Version) + ') and file version (' +
+											IntToVStr(Result.Version) + ') differs - using parsed/registry version'
 										);
 										if DialogDebug then NSISDialog(
-											'Parsed/registry version (' + IntToNStr(Version) + ') and file version (' +
-											IntToNStr(Result.Version) + ') differs - using parsed/registry version',
+											'Parsed/registry version (' + IntToVStr(Version) + ') and file version (' +
+											IntToVStr(Result.Version) + ') differs - using parsed/registry version',
 											'Warning',
 											MB_OK,
 											Warning
@@ -847,12 +400,12 @@ begin
 									nQWord := GetRegInt(hk2, 'MinorVersion', Debug, DialogDebug);
 									if nQWord.Valid and (nQWord.Value > 0) and (nQWord.Value <> Result.Build) then begin
 										if Debug then LogMessage(
-											'Registry build (' + IntToNStr(nQWord.Value) + ') and file build (' +
-											IntToNStr(Result.Version) + ') differs - using registry build'
+											'Registry build (' + IntToVStr(nQWord.Value) + ') and file build (' +
+											IntToVStr(Result.Version) + ') differs - using registry build'
 										);
 										if DialogDebug then NSISDialog(
-											'Registry build (' + IntToNStr(nQWord.Value) + ') and file build (' +
-											IntToNStr(Result.Version) + ') differs - using registry build',
+											'Registry build (' + IntToVStr(nQWord.Value) + ') and file build (' +
+											IntToVStr(Result.Version) + ') differs - using registry build',
 											'Warning',
 											MB_OK,
 											Warning
@@ -877,26 +430,6 @@ begin
 	end;
 end;
 
-{
-	Since TFGObjectLIst isn't made to be subclassed, this is a "quick and dirty" way to ensure item uniqueness.
-	Returns True if actually added.
-}
-function AddInstallationIfUnique(const Installation : TJavaInstallation; var Installations : TFPGObjectList<TJavaInstallation>) : Boolean;
-
-var
-	i : Integer;
-
-begin
-	Result := False;
-	if (Installation = Nil) or (Installations = Nil) then Exit;
-
-	for i := 0 to Installations.Count - 1 do begin
-		if Installations[i].Equals(Installation) then Exit;
-	end;
-	Installations.Add(Installation);
-	Result := True;
-end;
-
 procedure ProcessRegistry(const Is64 : Boolean; const Params : TParameters);
 
 const
@@ -906,7 +439,7 @@ var
 	h, rootKey : HKEY;
 	run : Integer = 0;
 	samDesired : REGSAM = baseSamDesired;
-	subKey : NSISTString;
+	subKey : VString;
 	Installation : TJavaInstallation;
 	Installations : TFPGObjectList<TJavaInstallation>;
 
@@ -938,21 +471,23 @@ begin
 	until ((not Is64) and (run > 1)) or (run > 3);
 end;
 
-function TParameters.GetRegistryPaths() : TNSISTStringList;
+function TParameters.GetRegistryPaths() : TVStringList;
 begin
 	Result := FRegistryPaths;
 end;
 
-function TParameters.GetFilePaths() : TNSISTStringList;
+function TParameters.GetFilePaths() : TVStringList;
 begin
 	Result := FFilePaths;
 end;
 
-function TParameters.ReadParams() : TNSISTStringList;
+function TParameters.ReadParams() : TVStringList;
+
 var
-	parameter : NSISTString;
+	parameter : VString;
+
 begin
-	Result := TNSISTStringList.Create;
+	Result := TVStringList.Create();
 	parameter := PopString();
 	while (not EqualStr(parameter, '/END', False)) and (not EqualStr(parameter, '/END;', False)) do begin
 		Result.Add(parameter);
@@ -978,7 +513,7 @@ const
 	poDialogDebug = '/DIALOGDEBUG';
 
 var
-	parameterList : TNSISTStringList;
+	parameterList : TVStringList;
 	i : Integer;
 
 begin
@@ -997,7 +532,7 @@ begin
 				Inc(i);
 			end
 			else if EqualStr(poReg, parameterList[i], False) then begin
-				FRegistryPaths.Add(parameterList[i + 1]);
+				FRegistryPaths.AddUnique(parameterList[i + 1], False);
 				Inc(i);
 			end
 			else begin
@@ -1005,7 +540,7 @@ begin
 			end;
 		end
 		else begin
-			FFilePaths.Add(parameterList[i]);
+			FFilePaths.AddUnique(parameterList[i], False);
 		end;
 		Inc(i);
 	end;
@@ -1084,7 +619,7 @@ constructor TParameters.Create();
 }
 
 const
-	StandardRegPaths : array [0..5] of NSISTString = (
+	StandardRegPaths : array [0..5] of VString = (
 		'SOFTWARE\JavaSoft',
 		'SOFTWARE\Eclipse Adoptium',
 		'SOFTWARE\Azul Systems\Zulu',
@@ -1097,11 +632,11 @@ var
 	i : Integer;
 
 begin
-	FRegistryPaths := TNSISTStringList.Create();
+	FRegistryPaths := TVStringList.Create();
 	for i := 0 to high(StandardRegPaths) do begin
 		FRegistryPaths.Add(StandardRegPaths[i]);
 	end;
-	FFilePaths := TNSISTStringList.Create();
+	FFilePaths := TVStringList.Create();
 	FIsLogging := False;
 	FIsDialogDebug := False;
 end;
