@@ -75,8 +75,11 @@ function EqualStr(str1, str2 : VString; CaseSensitive : Boolean = true) : Boolea
 function EndsWith(subStr : VString; const str : VString; CaseSensitive : Boolean = true) : Boolean;
 function InstallationTypeToStr(const InstallationType : TInstallationType) : VString;
 function ArchitectureToStr(const Architecture : TArchitecture; const BitsOnly : Boolean) : VString;
+function SplitStr(const Path : VString; const separators : array of VChar) : TVStringArray;
+function SplitPath(const Path : VString): TVStringArray;
 function SystemErrorToStr(MessageId : DWORD) : VString;
 function IsWOW64 : Boolean;
+function ExpandEnvStrings(const str : VString) : VString;
 function OpenRegKey(const rootKey : HKEY; const subKey : VString; samDesired : REGSAM; const Debug, DialogDebug : Boolean) : HKEY;
 function GetRegInt(const key : HKEY; const valueName : VString; const Debug, DialogDebug : Boolean) : TNullableQWord;
 function GetRegString(const key : HKEY; const valueName : VString; const Debug, DialogDebug : Boolean) : VString;
@@ -218,6 +221,71 @@ begin
 	end;
 end;
 
+function SplitStr(const Path : VString; const separators : array of VChar) : TVStringArray;
+
+const
+	BlockSize = 10;
+
+	procedure MaybeGrow(Curlen : SizeInt);
+	begin
+		if Length(Result) <= CurLen then SetLength(Result, Length(Result) + BlockSize);
+	end;
+
+	function IsSeparator(c : VChar) : Boolean;
+
+	var
+		ch : VChar;
+
+	begin
+		Result := False;
+		for ch in separators do begin
+			if ch = c then begin
+				Result := True;
+				Exit;
+			end;
+		end;
+	end;
+
+var
+	LastSep, Len, StrLen, i : SizeInt;
+
+begin
+	StrLen := Length(Path);
+	if (StrLen = 0) or (Length(separators) = 0) then begin
+		SetLength(Result, 0);
+		Exit;
+	end;
+
+	SetLength(Result, BlockSize);
+	Len := 0;
+	LastSep := 0;
+	for i := 1 to StrLen do begin
+		if IsSeparator(Path[i]) then begin
+			if i > lastSep + 1 then begin
+				MaybeGrow(Len);
+				Result[Len] := Copy(Path, lastSep + 1, i - lastSep - 1);
+				Inc(Len);
+			end;
+			lastSep := i;
+		end;
+	end;
+	if lastSep < StrLen then begin
+		MaybeGrow(Len);
+		Result[Len] := Copy(Path, lastSep + 1, StrLen - lastSep);
+		Inc(Len);
+	end;
+	SetLength(Result, Len);
+end;
+
+function SplitPath(const Path : VString): TVStringArray;
+
+const
+	PathSeparators : array[0..1] of VChar = ('\', '/');
+
+begin
+	Result := SplitStr(Path, PathSeparators);
+end;
+
 { Windows API routines }
 
 function SystemErrorToStr(MessageId : DWORD) : VString;
@@ -284,6 +352,31 @@ begin
 		if IsWow64Process(GetCurrentProcess, @res) then Result := res
 		else NSISDialog('Failed to query IsWow64Process', 'Error', MB_OK);
 	end;
+end;
+
+function ExpandEnvStrings(const str : VString) : VString;
+
+var
+	retVal : DWORD;
+
+begin
+	Result := '';
+	if str = '' then Exit;
+
+{$IFDEF UNICODE}
+	retVal := ExpandEnvironmentStringsW(LPCWSTR(str), Nil, 0);
+{$ELSE}
+	retVal := ExpandEnvironmentStringsA(LPCSTR(str), Nil, 0);
+{$ENDIF}
+	if retVal = 0 then Exit;
+	SetLength(Result, retVal);
+
+{$IFDEF UNICODE}
+	retVal := ExpandEnvironmentStringsW(LPCWSTR(str), @result[1], retVal);
+{$ELSE}
+	retVal := ExpandEnvironmentStringsA(LPCSTR(str), LPCSTR(result), retVal);
+{$ENDIF}
+	SetLength(Result, retVal - 1);
 end;
 
 function OpenRegKey(const rootKey : HKEY; const subKey : VString; samDesired : REGSAM; const Debug, DialogDebug : Boolean) : HKEY;

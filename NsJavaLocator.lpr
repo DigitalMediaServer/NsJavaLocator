@@ -39,6 +39,7 @@ type
 	TParameters = class(TObject)
 	private
 		FRegistryPaths : TVStringList;
+		FEnvironmentVariables : TVStringList;
 		FFilePaths : TVStringList;
 		FIsLogging : Boolean;
 		FIsDialogDebug : Boolean;
@@ -47,12 +48,14 @@ type
 		function GetDialogDebug() : Boolean;
 	public
 		function GetRegistryPaths() : TVStringList;
+		function GetEnvironmentVariables() : TVStringList;
 		function GetFilePaths() : TVStringList;
 		procedure ParseParams();
 		constructor Create();
 		destructor Destroy(); override;
 	published
 		property RegistryPaths : TVStringList read GetRegistryPaths;
+		property EnvironmentVariables : TVStringList read GetEnvironmentVariables;
 		property FilePaths : TVStringList read GetFilePaths;
 		property IsLogging : Boolean read GetLogging;
 		property IsDialogDebug : Boolean read GetDialogDebug;
@@ -155,7 +158,39 @@ begin
 	Result := GetInstallationWithPathIdx(Path, Installations) >= 0;
 end;
 
-function ResolveJavawPath(Const Path : VString) : VString;
+function InferTypeFromPath(const Path : VString) : TInstallationType;
+
+var
+	parts : TVStringArray;
+	i, first, last : Integer;
+	regEx : TRegExpr;
+
+begin
+	Result := TInstallationType.UNKNOWN;
+	if Path = '' then Exit;
+	parts := SplitPath(Path);
+	if Length(parts) < 1 then Exit;
+	regEx := TRegExpr.Create('(?i)(JDK|JRE)');
+	try
+		first := Length(parts) - 1;
+		if EqualStr('bin', parts[first], False) then Dec(first);
+		if first < 0 then Exit;
+		if first > 0 then last := first - 1
+		else last := first;
+
+		for i:= first downto last do begin
+			if regEx.Exec(parts[i]) then begin
+				if EqualStr(regEx.Match[1], 'JDK', False) then Result := TInstallationType.JDK
+				else Result := TInstallationType.JRE;
+				Exit;
+			end;
+		end;
+	finally
+		regEx.Free;
+	end;
+end;
+
+function ResolveJavawPath(const Path : VString) : VString;
 
 begin
 	Result := Path;
@@ -612,9 +647,38 @@ begin
 	until ((not Is64) and (run > 1)) or (run > 3);
 end;
 
+procedure ProcessEnvironmentVariables(const Params : TParameters);
+
+var
+	Installation : TJavaInstallation;
+	Installations : TFPGObjectList<TJavaInstallation>;
+	InstallationType : TInstallationType;
+	envVar, s : VString;
+
+begin
+	Installations := TFPGObjectList<TJavaInstallation>.Create(True);
+	for envVar in Params.EnvironmentVariables do begin
+		s := ExpandEnvStrings(envVar);
+		if s <> envVar then begin
+			InstallationType := InferTypeFromPath(s);
+			s := ResolveJavawPath(s);
+			Installation := GetJavawInfo(s);
+			if Installation <> Nil then begin
+				Installation.InstallationType := InstallationType;
+				AddInstallationIfUnique(Installation, Installations);
+			end;
+		end;
+	end;
+end;
+
 function TParameters.GetRegistryPaths() : TVStringList;
 begin
 	Result := FRegistryPaths;
+end;
+
+function TParameters.GetEnvironmentVariables() : TVStringList;
+begin
+	Result := FEnvironmentVariables;
 end;
 
 function TParameters.GetFilePaths() : TVStringList;
@@ -650,6 +714,9 @@ procedure TParameters.ParseParams();
 
 const
 	poReg = '/REGPATH';
+	poRegDel = '/DELREGPATH';
+	poEnv = '/ENVSTR';
+	poEnvDel = '/DELENVSTR';
 	poLog = '/LOG';
 	poDialogDebug = '/DIALOGDEBUG';
 
@@ -674,6 +741,18 @@ begin
 			end
 			else if EqualStr(poReg, parameterList[i], False) then begin
 				FRegistryPaths.AddUnique(parameterList[i + 1], False);
+				Inc(i);
+			end
+			else if EqualStr(poRegDel, parameterList[i], False) then begin
+				FRegistryPaths.RemoveMatching(parameterList[i + 1], False);
+				Inc(i);
+			end
+			else if EqualStr(poEnv, parameterList[i], False) then begin
+				FEnvironmentVariables.AddUnique(parameterList[i + 1], False);
+				Inc(i);
+			end
+			else if EqualStr(poEnvDel, parameterList[i], False) then begin
+				FEnvironmentVariables.RemoveMatching(parameterList[i + 1], False);
 				Inc(i);
 			end
 			else begin
@@ -777,6 +856,8 @@ begin
 	for i := 0 to high(StandardRegPaths) do begin
 		FRegistryPaths.Add(StandardRegPaths[i]);
 	end;
+	FEnvironmentVariables := TVStringList.Create();
+	FEnvironmentVariables.Add('%JAVA_HOME%');
 	FFilePaths := TVStringList.Create();
 	FIsLogging := False;
 	FIsDialogDebug := False;
@@ -785,6 +866,7 @@ end;
 destructor TParameters.Destroy();
 begin
 	FFilePaths.Free();
+	FEnvironmentVariables.Free();
 	FRegistryPaths.Free();
 	inherited Destroy;
 end;
@@ -799,6 +881,7 @@ begin
 	parameters := TParameters.Create();
 	parameters.ParseParams();
 	ProcessRegistry(IsWOW64, parameters);
+	ProcessEnvironmentVariables(parameters);
 end;
 
 exports Locate;
