@@ -671,6 +671,30 @@ begin
 	end;
 end;
 
+procedure ProcessOSPath;
+
+var
+	Installation : TJavaInstallation;
+	PathElements : TVStringArray;
+	Installations : TFPGObjectList<TJavaInstallation>;
+	Element, s : VString;
+
+begin
+	Installations := TFPGObjectList<TJavaInstallation>.Create(True);
+	s := ExpandEnvStrings('%PATH%');
+	if s = '%PATH%' then Exit;
+	PathElements := SplitStr(s, [';']);
+	if PathElements = Nil then Exit;
+	for Element in PathElements do begin
+		s := ResolveJavawPath(Element);
+		Installation := GetJavawInfo(s);
+		if Installation <> Nil then begin
+			Installation.InstallationType := InferTypeFromPath(Element);
+			if not AddInstallationIfUnique(Installation, Installations) then Installation.Free;
+		end;
+	end;
+end;
+
 function TParameters.GetRegistryPaths() : TVStringList;
 begin
 	Result := FRegistryPaths;
@@ -882,6 +906,7 @@ begin
 	parameters.ParseParams();
 	ProcessRegistry(IsWOW64, parameters);
 	ProcessEnvironmentVariables(parameters);
+	ProcessOSPath();
 end;
 
 exports Locate;
