@@ -30,6 +30,7 @@ uses
 	RegExpr,
 	fgl,
 	NSIS,
+	Core,
 	Utils;
 
 type
@@ -64,22 +65,6 @@ type
 		property IsDialogDebug : Boolean read GetDialogDebug;
 	end;
 
-	{ TJavaInstallation }
-
-	TJavaInstallation = class(TObject)
-	public
-		Version : Integer;
-		Build : Integer;
-		Path : VString;
-		InstallationType : TInstallationType;
-		Architecture : TArchitecture;
-		Optimal : Boolean;
-		function Equals(Obj : TJavaInstallation) : boolean; overload;
-		function CalcScore : Integer;
-		constructor Create;
-		destructor Destroy; override;
-	end;
-
 	{ TParser }
 
 	TParser = class(TObject)
@@ -112,81 +97,6 @@ type
 	published
 		property Installations : TFPGObjectList<TJavaInstallation> read GetInstallations;
 	end;
-
-{ TJavaInstallation }
-
-function TJavaInstallation.Equals(Obj : TJavaInstallation) : boolean;
-begin
-	Result := (Obj <> Nil) and (Version = Obj.Version) and (Build = Obj.Build) and
-		(InstallationType = Obj.InstallationType) and (Architecture = Obj.Architecture) and
-		(Optimal = Obj.Optimal) and EqualStr(Path, Obj.Path, False);
-end;
-
-{
-	Calculates a "score" that indicates how "good" information this instance has.
-}
-function TJavaInstallation.CalcScore : Integer;
-begin
-	Result := 0;
-	if Path <> '' then Inc(Result, 5);
-	if Version > 0 then Inc(Result);
-	if Build > -1 then Inc(Result);
-	if InstallationType <> TInstallationType.UNKNOWN then Inc(Result);
-	if Architecture <> TArchitecture.UNKNOWN then Inc(Result);
-end;
-
-constructor TJavaInstallation.Create;
-begin
-	Version := -1;
-	Build := -1;
-	Path := '';
-	InstallationType := TInstallationType.UNKNOWN;
-end;
-
-destructor TJavaInstallation.Destroy;
-begin
-	inherited Destroy;
-end;
-
-{
-	Since TFGObjectLIst isn't made to be subclassed, these methods are a "quick and dirty" way to ensure item uniqueness.
-}
-function GetInstallationWithPathIdx(const Path : VString; const Installations : TFPGObjectList<TJavaInstallation>) : Integer;
-
-var
-	i : Integer;
-
-begin
-	Result := -1;
-	if (Path = '') or (Installations = Nil) then Exit;
-
-	for i := 0 to Installations.Count - 1 do begin
-		if EqualStr(Installations[i].Path, Path, False) then begin
-			Result := i;
-			Exit;
-		end;
-	end;
-end;
-
-{
-	Returns True if actually added.
-}
-function AddInstallationIfUnique(const Installation : TJavaInstallation; const Installations : TFPGObjectList<TJavaInstallation>) : Boolean;
-
-begin
-	Result := False;
-	if (Installation = Nil) or (Installations = Nil) or (Installation.Path = '') then Exit;
-
-	if GetInstallationWithPathIdx(Installation.Path, Installations) >= 0 then Exit;
-	Installations.Add(Installation);
-	Result := True;
-end;
-
-function InstallationPathExists(const Path : VString; const Installations : TFPGObjectList<TJavaInstallation>) : Boolean;
-
-begin
-	Result := GetInstallationWithPathIdx(Path, Installations) >= 0;
-end;
 
 function ResolveJavawPath(const Path : VString) : VString;
 
