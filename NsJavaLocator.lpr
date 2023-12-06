@@ -41,9 +41,11 @@ type
 		FRegistryPaths : TVStringList;
 		FEnvironmentVariables : TVStringList;
 		FFilePaths : TVStringList;
+		FLogLevel : TLogLevel;
 		FIsLogging : Boolean;
 		FIsDialogDebug : Boolean;
 		function ReadParams() : TVStringList;
+		function GetLogLevel() : TLogLevel;
 		function GetLogging() : Boolean;
 		function GetDialogDebug() : Boolean;
 	public
@@ -57,6 +59,7 @@ type
 		property RegistryPaths : TVStringList read GetRegistryPaths;
 		property EnvironmentVariables : TVStringList read GetEnvironmentVariables;
 		property FilePaths : TVStringList read GetFilePaths;
+		property LogLevel : TLogLevel read GetLogLevel;
 		property IsLogging : Boolean read GetLogging;
 		property IsDialogDebug : Boolean read GetDialogDebug;
 	end;
@@ -77,11 +80,38 @@ type
 		destructor Destroy; override;
 	end;
 
-const
-	ModernJavaVersionRE = '^\s*(\d+)\.(\d+)\.(\d+).*';
-	LegacyJavaVersionRE = '^\s*1\.(\d+)(?:\.(\d+)_(\d+))?\s*$';
-	ZuluRE = '(?i)^\s*zulu-(\d+)(?:-(jre))?\s*$';
-	LibericaRE = '(?i)^\s*(jre|jdk)-(\d+)\s*$';
+	{ TParser }
+
+	TParser = class(TObject)
+	protected
+		FLogger : TLogger;
+		FParams : TParameters;
+		FInstallations : TFPGObjectList<TJavaInstallation>;
+		FJdkJreRegEx : TRegExpr;
+		FModernRegEx : TRegExpr;
+		FLegacyRegEx : TRegExpr;
+		FZuluRegEx : TRegExpr;
+		FLibericaRegEx : TRegExpr;
+		const JdkJreRE = '(?i)(JDK|JRE)';
+		const ModernJavaVersionRE = '^\s*(\d+)\.(\d+)\.(\d+).*';
+		const LegacyJavaVersionRE = '^\s*1\.(\d+)(?:\.(\d+)_(\d+))?\s*$';
+		const ZuluRE = '(?i)^\s*zulu-(\d+)(?:-(jre))?\s*$';
+		const LibericaRE = '(?i)^\s*(jre|jdk)-(\d+)\s*$';
+		function GetInstallations() : TFPGObjectList<TJavaInstallation>;
+		function InferTypeFromPath(const Path : VString) : TInstallationType;
+		function ParseAdoptiumSemeru(hk : HKEY; const samDesired : REGSAM) : Integer;
+		function ParseJavaSoft(hk : HKEY; const samDesired : REGSAM) : Integer;
+		function ParseZuluLiberica(hk : HKEY; const samDesired : REGSAM) : Integer;
+		procedure ProcessEnvironmentVariables();
+		procedure ProcessOSPath();
+		procedure ProcessRegistry(const Is64 : Boolean);
+	public
+		procedure Process();
+		constructor Create(const Params : TParameters; const Logger : TLogger);
+		destructor Destroy(); override;
+	published
+		property Installations : TFPGObjectList<TJavaInstallation> read GetInstallations;
+	end;
 
 { TJavaInstallation }
 
@@ -158,38 +188,6 @@ begin
 	Result := GetInstallationWithPathIdx(Path, Installations) >= 0;
 end;
 
-function InferTypeFromPath(const Path : VString) : TInstallationType;
-
-var
-	parts : TVStringArray;
-	i, first, last : Integer;
-	regEx : TRegExpr;
-
-begin
-	Result := TInstallationType.UNKNOWN;
-	if Path = '' then Exit;
-	parts := SplitPath(Path);
-	if Length(parts) < 1 then Exit;
-	regEx := TRegExpr.Create('(?i)(JDK|JRE)');
-	try
-		first := Length(parts) - 1;
-		if EqualStr('bin', parts[first], False) then Dec(first);
-		if first < 0 then Exit;
-		if first > 0 then last := first - 1
-		else last := first;
-
-		for i:= first downto last do begin
-			if regEx.Exec(parts[i]) then begin
-				if EqualStr(regEx.Match[1], 'JDK', False) then Result := TInstallationType.JDK
-				else Result := TInstallationType.JRE;
-				Exit;
-			end;
-		end;
-	finally
-		regEx.Free;
-	end;
-end;
-
 function ResolveJavawPath(const Path : VString) : VString;
 
 begin
@@ -233,20 +231,45 @@ begin
 	end;
 end;
 
+function TParser.GetInstallations : TFPGObjectList<TJavaInstallation>;
+begin
+	Result := FInstallations;
+end;
+
+function TParser.InferTypeFromPath(const Path : VString) : TInstallationType;
+
+var
+	parts : TVStringArray;
+	i, first, last : Integer;
+
+begin
+	Result := TInstallationType.UNKNOWN;
+	if Path = '' then Exit;
+	parts := SplitPath(Path);
+	if Length(parts) < 1 then Exit;
+	first := Length(parts) - 1;
+	if EqualStr('bin', parts[first], False) then Dec(first);
+	if first < 0 then Exit;
+	if first > 0 then last := first - 1
+	else last := first;
+
+	for i:= first downto last do begin
+		if FJdkJreRegEx.Exec(parts[i]) then begin
+			if EqualStr(FJdkJreRegEx.Match[1], 'JDK', False) then Result := TInstallationType.JDK
+			else Result := TInstallationType.JRE;
+			Exit;
+		end;
+	end;
+end;
+
 {
 	Returns the number of added installations
 }
-function ParseAdoptiumSemeru(
-	hk : HKEY;
-	const samDesired : REGSAM;
-	const Installations : TFPGObjectList<TJavaInstallation>;
-	const Debug, DialogDebug : Boolean
-) : Integer ;
+function TParser.ParseAdoptiumSemeru(hk : HKEY; const samDesired : REGSAM) : Integer;
 
 var
 	Installation : TJavaInstallation;
 	SubKeys, SubKeys2, SubKeys3, SubKeys4 : TVStringList;
-	regEx : TRegExpr;
 	i, j, k, l, Version, Build : Integer;
 	hk2, hk3, hk4, hk5 : HKEY;
 	installationType : TInstallationType;
@@ -254,38 +277,37 @@ var
 
 begin
 	Result := 0;
-	SubKeys := EnumerateRegSubKeys(hk, Debug, DialogDebug);
-	regEx := TRegExpr.Create(ModernJavaVersionRE);
+	SubKeys := EnumerateRegSubKeys(hk, FLogger);
 	try
 		for i := 0 to SubKeys.Count - 1 do begin
 			if EqualStr(SubKeys[i], 'JDK', False) then installationType := TInstallationType.JDK
 			else if EqualStr(SubKeys[i], 'JRE', False) then installationType := TInstallationType.JRE
 			else installationType := TInstallationType.UNKNOWN;
 			if installationType <> TInstallationType.UNKNOWN then begin
-				hk2 := OpenRegKey(hk, SubKeys[i], samDesired, Debug, DialogDebug);
-				SubKeys2 := EnumerateRegSubKeys(hk2, Debug, DialogDebug);
+				hk2 := OpenRegKey(hk, SubKeys[i], samDesired, FLogger);
+				SubKeys2 := EnumerateRegSubKeys(hk2, FLogger);
 				try
 					for j := 0 to SubKeys2.Count - 1 do begin
-						regEx.InputString := SubKeys2[j];
-						if (regEx.Exec) and (regEx.Match[1] <> '1') then begin
-							Version := VStrToIntDef(regEx.Match[1], -1);
-							Build := VStrToIntDef(regEx.Match[3], -1);
-							hk3 := OpenRegKey(hk2, SubKeys2[j], samDesired, Debug, DialogDebug);
+						FModernRegEx.InputString := SubKeys2[j];
+						if (FModernRegEx.Exec) and (FModernRegEx.Match[1] <> '1') then begin
+							Version := VStrToIntDef(FModernRegEx.Match[1], -1);
+							Build := VStrToIntDef(FModernRegEx.Match[3], -1);
+							hk3 := OpenRegKey(hk2, SubKeys2[j], samDesired, FLogger);
 							if hk3 <> 0 then begin
-								SubKeys3 := EnumerateRegSubKeys(hk3, Debug, DialogDebug);
+								SubKeys3 := EnumerateRegSubKeys(hk3, FLogger);
 								try
 									for k := 0 to SubKeys3.Count - 1 do begin
 										if EqualStr(SubKeys3[k], 'hotspot', False) or EqualStr(SubKeys3[k], 'openj9', False) then begin
-											hk4 := OpenRegKey(hk3, SubKeys3[k], samDesired, Debug, DialogDebug);
+											hk4 := OpenRegKey(hk3, SubKeys3[k], samDesired, FLogger);
 											if hk4 <> 0 then begin
-												SubKeys4 := EnumerateRegSubKeys(hk4, Debug, DialogDebug);
+												SubKeys4 := EnumerateRegSubKeys(hk4, FLogger);
 												try
 													l := SubKeys4.IndexOf('MSI');
 													if l >= 0 then begin
-														hk5 := OpenRegKey(hk4, SubKeys4[l], samDesired, Debug, DialogDebug);
+														hk5 := OpenRegKey(hk4, SubKeys4[l], samDesired, FLogger);
 														if hk5 <> 0 then begin
 															try
-																s := GetRegString(hk5, 'Path', Debug, DialogDebug);
+																s := GetRegString(hk5, 'Path', FLogger);
 															finally
 																RegCloseKey(hk5);
 															end;
@@ -294,36 +316,24 @@ begin
 																Installation := GetJavawInfo(s);
 																if Installation <> Nil then begin
 																	if (Version > 0) and (Version <> Installation.Version) then begin
-																		if Debug then LogMessage(
-																			'Parsed version (' + IntToVStr(Version) + ') and file version (' +
-																			IntToVStr(Installation.Version) + ') differs - using parsed version'
-																		);
-																		if DialogDebug then NSISDialog(
+																		if FLogger <> Nil then FLogger.Log(
 																			'Parsed version (' + IntToVStr(Version) + ') and file version (' +
 																			IntToVStr(Installation.Version) + ') differs - using parsed version',
-																			'Warning',
-																			MB_OK,
-																			Warning
+																			TLogLevel.WARN
 																		);
 																		Installation.Version := Version;
 																	end;
 																	if (Build > -1) and (Build <> Installation.Build) then begin
-																		if Debug then LogMessage(
-																			'Parsed build (' + IntToVStr(Build) + ') and file build (' +
-																			IntToVStr(Installation.Build) + ') differs - using parsed build'
-																		);
-																		if DialogDebug then NSISDialog(
+																		if FLogger <> Nil then FLogger.Log(
 																			'Parsed build (' + IntToVStr(Build) + ') and file build (' +
 																			IntToVStr(Installation.Build) + ') differs - using parsed build',
-																			'Warning',
-																			MB_OK,
-																			Warning
+																			TLogLevel.WARN
 																		);
 																		Installation.Build := Build;
 																	end;
 																	Installation.InstallationType := installationType;
 																	Installation.Architecture := GetPEArchitecture(s);
-																	if AddInstallationIfUnique(Installation, Installations) then Inc(Result)
+																	if AddInstallationIfUnique(Installation, FInstallations) then Inc(Result)
 																	else Installation.Free;
 																end;
 															end;
@@ -350,7 +360,6 @@ begin
 			end;
 		end;
 	finally
-		regEx.Free;
 		SubKeys.Free;
 	end;
 end;
@@ -358,144 +367,12 @@ end;
 {
 	Returns the number of added installations
 }
-function ParseZuluLiberica(
-	hk : HKEY;
-	const samDesired : REGSAM;
-	const Installations : TFPGObjectList<TJavaInstallation>;
-	const Debug, DialogDebug : Boolean
-) : Integer;
-
-var
-	Installation : TJavaInstallation;
-	SubKeys : TVStringList;
-	regExZulu, regExLiberica : TRegExpr;
-	i, Version : Integer;
-	InstallationType : TInstallationType;
-	hk2 : HKEY;
-	found : Boolean;
-	nQWord : TNullableQWord;
-	s : VString;
-
-begin
-	Result := 0;
-	SubKeys := EnumerateRegSubKeys(hk, Debug, DialogDebug);
-	try
-		if SubKeys.Count > 0 then begin
-			regExZulu := TRegExpr.Create(ZuluRE);
-			regExLiberica := TRegExpr.Create(LibericaRE);
-			try
-				for i := 0 to SubKeys.Count - 1 do begin
-					InstallationType := TInstallationType.UNKNOWN;
-					found := False;
-					regExZulu.InputString := SubKeys[i];
-					if regExZulu.Exec then begin
-						Version := VStrToIntDef(regExZulu.Match[1], -1);
-						if regExZulu.Match[2] <> '' then InstallationType := TInstallationType.JRE
-						else InstallationType := TInstallationType.JDK;
-						found := True;
-					end
-					else begin
-						regExLiberica.InputString := SubKeys[i];
-						if regExLiberica.Exec then begin
-							Version := VStrToIntDef(regExZulu.Match[2], -1);
-							if EqualStr('jre', regExLiberica.Match[1], False) then InstallationType := TInstallationType.JRE
-							else if EqualStr('jdk', regExLiberica.Match[1], False) then InstallationType := TInstallationType.JDK;
-							found := True;
-						end;
-					end;
-
-					if found then begin
-						hk2 := OpenRegKey(hk, SubKeys[i], samDesired, Debug, DialogDebug);
-						if hk2 <> 0 then begin
-							try
-								s := GetRegString(hk2, 'InstallationPath', Debug, DialogDebug);
-								if s <> '' then begin
-									s := ResolveJavawPath(s);
-									Installation := GetJavawInfo(s);
-									if Installation <> Nil then begin
-										Installation.InstallationType := InstallationType;
-										nQWord := GetRegInt(hk2, 'MajorVersion', Debug, DialogDebug);
-										if nQWord.Valid and (nQWord.Value > 0) then begin
-											if (Version > 0) and (nQWord.Value <> Version) then begin
-												if Debug then LogMessage(
-													'Parsed version (' + IntToVStr(Version) + ') and registry version (' +
-													IntToVStr(nQWord.Value) + ') differs - using registry version'
-												);
-												if DialogDebug then NSISDialog(
-													'Parsed version (' + IntToVStr(Version) + ') and registry version (' +
-													IntToVStr(nQWord.Value) + ') differs - using registry version',
-													'Warning',
-													MB_OK,
-													Warning
-												);
-												Version := nQWord.Value;
-											end;
-										end;
-										if (Version > 0) and (Version <> Installation.Version) then begin
-											if Debug then LogMessage(
-												'Parsed/registry version (' + IntToVStr(Version) + ') and file version (' +
-												IntToVStr(Installation.Version) + ') differs - using parsed/registry version'
-											);
-											if DialogDebug then NSISDialog(
-												'Parsed/registry version (' + IntToVStr(Version) + ') and file version (' +
-												IntToVStr(Installation.Version) + ') differs - using parsed/registry version',
-												'Warning',
-												MB_OK,
-												Warning
-											);
-											Installation.Version := Version;
-										end;
-
-										nQWord := GetRegInt(hk2, 'MinorVersion', Debug, DialogDebug);
-										if nQWord.Valid and (nQWord.Value > 0) and (nQWord.Value <> Installation.Build) then begin
-											if Debug then LogMessage(
-												'Registry build (' + IntToVStr(nQWord.Value) + ') and file build (' +
-												IntToVStr(Installation.Version) + ') differs - using registry build'
-											);
-											if DialogDebug then NSISDialog(
-												'Registry build (' + IntToVStr(nQWord.Value) + ') and file build (' +
-												IntToVStr(Installation.Version) + ') differs - using registry build',
-												'Warning',
-												MB_OK,
-												Warning
-											);
-											Installation.Build := nQWord.Value;
-										end;
-										Installation.Architecture := GetPEArchitecture(s);
-										if AddInstallationIfUnique(Installation, Installations) then Inc(Result)
-										else Installation.Free;
-									end;
-								end;
-							finally
-								RegCloseKey(hk2);
-							end;
-						end;
-					end;
-				end;
-			finally
-				regExZulu.Free;
-				regExLiberica.Free;
-			end;
-		end;
-	finally
-		SubKeys.Free;
-	end;
-end;
-
-{
-	Returns the number of added installations
-}
-function ParseJavaSoft(
-	hk : HKEY;
-	const samDesired : REGSAM;
-	const Installations : TFPGObjectList<TJavaInstallation>;
-	const Debug, DialogDebug : Boolean
-) : Integer;
+function TParser.ParseJavaSoft(hk : HKEY; const samDesired : REGSAM) : Integer;
 
 var
 	Installation : TJavaInstallation;
 	SubKeys, SubKeys2 : TVStringList;
-	regExModern, regExLegacy, regEx : TRegExpr;
+	regEx : TRegExpr;
 	i, j, Version, Build, idx : Integer;
 	hk2, hk3 : HKEY;
 	installationType : TInstallationType;
@@ -503,31 +380,29 @@ var
 
 begin
 	Result := 0;
-	SubKeys := EnumerateRegSubKeys(hk, Debug, DialogDebug);
-	regExModern := TRegExpr.Create(ModernJavaVersionRE);
-	regExLegacy := TRegExpr.Create(LegacyJavaVersionRE);
+	SubKeys := EnumerateRegSubKeys(hk, FLogger);
 	try
 		for i := 0 to SubKeys.Count - 1 do begin
 			if EqualStr(SubKeys[i], 'JDK', False) then begin
 				installationType := TInstallationType.JDK;
-				regEx := regExModern;
+				regEx := FModernRegEx;
 			end
 			else if EqualStr(SubKeys[i], 'JRE', False) then begin
 				installationType := TInstallationType.JRE;
-				regEx := regExModern;
+				regEx := FModernRegEx;
 			end
 			else if EqualStr(SubKeys[i], 'Java Development Kit', False) then begin
 				installationType := TInstallationType.JDK;
-				regEx := regExLegacy;
+				regEx := FLegacyRegEx;
 			end
 			else if EqualStr(SubKeys[i], 'Java Runtime Environment', False) then begin
 				installationType := TInstallationType.JRE;
-				regEx := regExLegacy;
+				regEx := FLegacyRegEx;
 			end
 			else installationType := TInstallationType.UNKNOWN;
 			if installationType <> TInstallationType.UNKNOWN then begin
-				hk2 := OpenRegKey(hk, SubKeys[i], samDesired, Debug, DialogDebug);
-				SubKeys2 := EnumerateRegSubKeys(hk2, Debug, DialogDebug);
+				hk2 := OpenRegKey(hk, SubKeys[i], samDesired, FLogger);
+				SubKeys2 := EnumerateRegSubKeys(hk2, FLogger);
 				try
 					for j := 0 to SubKeys2.Count - 1 do begin
 						regEx.InputString := SubKeys2[j];
@@ -535,55 +410,43 @@ begin
 							Version := VStrToIntDef(regEx.Match[1], -1);
 							if regEx.Match[3] <> '' then Build := VStrToIntDef(regEx.Match[3], -1)
 							else Build := -1;
-							hk3 := OpenRegKey(hk2, SubKeys2[j], samDesired, Debug, DialogDebug);
+							hk3 := OpenRegKey(hk2, SubKeys2[j], samDesired, FLogger);
 							if hk3 <> 0 then begin
 								try
-									s := GetRegString(hk3, 'JavaHome', Debug, DialogDebug);
+									s := GetRegString(hk3, 'JavaHome', FLogger);
 									if s <> '' then begin
 										s := ResolveJavawPath(s);
 										Installation := GetJavawInfo(s);
 										if Installation <> Nil then begin
 											if (Version > 0) and (Version <> Installation.Version) then begin
-												if Debug then LogMessage(
-													'Parsed version (' + IntToVStr(Version) + ') and file version (' +
-													IntToVStr(Installation.Version) + ') differs - using parsed version'
-												);
-												if DialogDebug then NSISDialog(
+												if FLogger <> Nil then FLogger.Log(
 													'Parsed version (' + IntToVStr(Version) + ') and file version (' +
 													IntToVStr(Installation.Version) + ') differs - using parsed version',
-													'Warning',
-													MB_OK,
-													Warning
+													TLogLevel.WARN
 												);
 												Installation.Version := Version;
 											end;
 											if (Build > -1) and (Build <> Installation.Build) then begin
-												if Debug then LogMessage(
-													'Parsed build (' + IntToVStr(Build) + ') and file build (' +
-													IntToVStr(Installation.Build) + ') differs - using parsed build'
-												);
-												if DialogDebug then NSISDialog(
+												if FLogger <> Nil then FLogger.Log(
 													'Parsed build (' + IntToVStr(Build) + ') and file build (' +
 													IntToVStr(Installation.Build) + ') differs - using parsed build',
-													'Warning',
-													MB_OK,
-													Warning
+													TLogLevel.WARN
 												);
 												Installation.Build := Build;
 											end;
 											Installation.InstallationType := installationType;
 											Installation.Architecture := GetPEArchitecture(s);
-											idx := GetInstallationWithPathIdx(s, Installations);
+											idx := GetInstallationWithPathIdx(s, FInstallations);
 											if idx > -1 then begin
-												if Installation.CalcScore > Installations[idx].CalcScore then begin
-													Installations.Delete(idx);
-													Installations.Add(Installation);
+												if Installation.CalcScore > FInstallations[idx].CalcScore then begin
+													FInstallations.Delete(idx);
+													FInstallations.Add(Installation);
 													Inc(Result);
 												end
 												else Installation.Free;
 											end
 											else begin
-												Installations.Add(Installation);
+												FInstallations.Add(Installation);
 												Inc(Result);
 											end;
 										end;
@@ -601,14 +464,147 @@ begin
 			end;
 		end;
 	finally
-		regExModern.Free;
-		regExLegacy.Free;
 		SubKeys.Free;
 	end;
 end;
 
-procedure ProcessRegistry(const Is64 : Boolean; const Params : TParameters);
+{
+	Returns the number of added installations
+}
+function TParser.ParseZuluLiberica(hk : HKEY; const samDesired : REGSAM) : Integer;
 
+var
+	Installation : TJavaInstallation;
+	SubKeys : TVStringList;
+	i, Version : Integer;
+	InstallationType : TInstallationType;
+	hk2 : HKEY;
+	found : Boolean;
+	nQWord : TNullableQWord;
+	s : VString;
+
+begin
+	Result := 0;
+	SubKeys := EnumerateRegSubKeys(hk, FLogger);
+	try
+		for i := 0 to SubKeys.Count - 1 do begin
+			InstallationType := TInstallationType.UNKNOWN;
+			found := False;
+			if FZuluRegEx.Exec(SubKeys[i]) then begin
+				Version := VStrToIntDef(FZuluRegEx.Match[1], -1);
+				if FZuluRegEx.Match[2] <> '' then InstallationType := TInstallationType.JRE
+				else InstallationType := TInstallationType.JDK;
+				found := True;
+			end
+			else begin
+				if FLibericaRegEx.Exec(SubKeys[i]) then begin
+					Version := VStrToIntDef(FLibericaRegEx.Match[2], -1);
+					if EqualStr('jre', FLibericaRegEx.Match[1], False) then InstallationType := TInstallationType.JRE
+					else if EqualStr('jdk', FLibericaRegEx.Match[1], False) then InstallationType := TInstallationType.JDK;
+					found := True;
+				end;
+			end;
+
+			if found then begin
+				hk2 := OpenRegKey(hk, SubKeys[i], samDesired, FLogger);
+				if hk2 <> 0 then begin
+					try
+						s := GetRegString(hk2, 'InstallationPath', FLogger);
+						if s <> '' then begin
+							s := ResolveJavawPath(s);
+							Installation := GetJavawInfo(s);
+							if Installation <> Nil then begin
+								Installation.InstallationType := InstallationType;
+								nQWord := GetRegInt(hk2, 'MajorVersion', FLogger);
+								if nQWord.Valid and (nQWord.Value > 0) then begin
+									if (Version > 0) and (nQWord.Value <> Version) then begin
+										if FLogger <> Nil then FLogger.Log(
+											'Parsed version (' + IntToVStr(Version) + ') and registry version (' +
+											IntToVStr(nQWord.Value) + ') differs - using registry version',
+											TLogLevel.WARN
+										);
+										Version := nQWord.Value;
+									end;
+								end;
+								if (Version > 0) and (Version <> Installation.Version) then begin
+									if FLogger <> Nil then FLogger.Log(
+										'Parsed/registry version (' + IntToVStr(Version) + ') and file version (' +
+										IntToVStr(Installation.Version) + ') differs - using parsed/registry version',
+										TLogLevel.WARN
+									);
+									Installation.Version := Version;
+								end;
+
+								nQWord := GetRegInt(hk2, 'MinorVersion', FLogger);
+								if nQWord.Valid and (nQWord.Value > 0) and (nQWord.Value <> Installation.Build) then begin
+									if FLogger <> Nil then FLogger.Log(
+										'Registry build (' + IntToVStr(nQWord.Value) + ') and file build (' +
+										IntToVStr(Installation.Version) + ') differs - using registry build',
+										TLogLevel.WARN
+									);
+									Installation.Build := nQWord.Value;
+								end;
+								Installation.Architecture := GetPEArchitecture(s);
+								if AddInstallationIfUnique(Installation, FInstallations) then Inc(Result)
+								else Installation.Free;
+							end;
+						end;
+					finally
+						RegCloseKey(hk2);
+					end;
+				end;
+			end;
+		end;
+	finally
+		SubKeys.Free;
+	end;
+end;
+
+procedure TParser.ProcessEnvironmentVariables;
+
+var
+	Installation : TJavaInstallation;
+	InstallationType : TInstallationType;
+	envVar, s : VString;
+
+begin
+	for envVar in FParams.EnvironmentVariables do begin
+		s := ExpandEnvStrings(envVar);
+		if s <> envVar then begin
+			InstallationType := InferTypeFromPath(s);
+			s := ResolveJavawPath(s);
+			Installation := GetJavawInfo(s);
+			if Installation <> Nil then begin
+				Installation.InstallationType := InstallationType;
+				AddInstallationIfUnique(Installation, FInstallations);
+			end;
+		end;
+	end;
+end;
+
+procedure TParser.ProcessOSPath;
+
+var
+	Installation : TJavaInstallation;
+	PathElements : TVStringArray;
+	Element, s : VString;
+
+begin
+	s := ExpandEnvStrings('%PATH%');
+	if s = '%PATH%' then Exit;
+	PathElements := SplitStr(s, [';']);
+	if PathElements = Nil then Exit;
+	for Element in PathElements do begin
+		s := ResolveJavawPath(Element);
+		Installation := GetJavawInfo(s);
+		if Installation <> Nil then begin
+			Installation.InstallationType := InferTypeFromPath(Element);
+			if not AddInstallationIfUnique(Installation, FInstallations) then Installation.Free;
+		end;
+	end;
+end;
+
+procedure TParser.ProcessRegistry(const Is64 : Boolean);
 const
 	baseSamDesired = KEY_READ or KEY_QUERY_VALUE or KEY_ENUMERATE_SUB_KEYS;
 
@@ -617,10 +613,8 @@ var
 	run : Integer = 0;
 	samDesired : REGSAM = baseSamDesired;
 	subKey : VString;
-	Installations : TFPGObjectList<TJavaInstallation>;
 
 begin
-	Installations := TFPGObjectList<TJavaInstallation>.Create(True);
 	repeat
 		if (run = 0) or (run = 2) then rootKey :=  HKEY_LOCAL_MACHINE
 		else rootKey := HKEY_CURRENT_USER;
@@ -629,13 +623,13 @@ begin
 			else samDesired := baseSamDesired or KEY_WOW64_64KEY;
 		end;
 
-		for subKey in Params.RegistryPaths do begin
-			h := OpenRegKey(rootKey, subKey, samDesired, Params.IsLogging, Params.IsDialogDebug);
+		for subKey in FParams.RegistryPaths do begin
+			h := OpenRegKey(rootKey, subKey, samDesired, FLogger);
 			if h <> 0 then begin
 				try
-					if ParseAdoptiumSemeru(h, samDesired, Installations, Params.IsLogging, Params.IsDialogDebug) < 1 then begin
-						if ParseZuluLiberica(h, samDesired, Installations, Params.IsLogging, Params.IsDialogDebug) < 1 then begin
-							ParseJavaSoft(h, samDesired, Installations, Params.IsLogging, Params.IsDialogDebug);
+					if ParseAdoptiumSemeru(h, samDesired) < 1 then begin
+						if ParseZuluLiberica(h, samDesired) < 1 then begin
+							ParseJavaSoft(h, samDesired);
 						end;
 					end;
 				finally
@@ -647,52 +641,50 @@ begin
 	until ((not Is64) and (run > 1)) or (run > 3);
 end;
 
-procedure ProcessEnvironmentVariables(const Params : TParameters);
+procedure TParser.Process();
 
 var
-	Installation : TJavaInstallation;
-	Installations : TFPGObjectList<TJavaInstallation>;
-	InstallationType : TInstallationType;
-	envVar, s : VString;
-
+	i : Integer;
 begin
-	Installations := TFPGObjectList<TJavaInstallation>.Create(True);
-	for envVar in Params.EnvironmentVariables do begin
-		s := ExpandEnvStrings(envVar);
-		if s <> envVar then begin
-			InstallationType := InferTypeFromPath(s);
-			s := ResolveJavawPath(s);
-			Installation := GetJavawInfo(s);
-			if Installation <> Nil then begin
-				Installation.InstallationType := InstallationType;
-				AddInstallationIfUnique(Installation, Installations);
-			end;
+	ProcessRegistry(IsWOW64(FLogger));
+	ProcessEnvironmentVariables();
+	ProcessOSPath;
+
+	if (FLogger <> Nil) and (FLogger.isDebug()) then begin
+		for i := 0 to FInstallations.Count - 1 do begin
+			FLogger.Log(
+				'Found Java installation ' + IntToVStr(i + 1) +
+				': Version=' + IntToVStr(FInstallations[i].Version) + ':' + IntToVStr(FInstallations[i].Build) +
+				', Type=' + InstallationTypeToStr(FInstallations[i].InstallationType) +
+				', Arch=' + ArchitectureToStr(FInstallations[i].Architecture, False) +
+				', Path=' + FInstallations[i].Path,
+				TLogLevel.DEBUG
+			);
 		end;
 	end;
 end;
 
-procedure ProcessOSPath;
-
-var
-	Installation : TJavaInstallation;
-	PathElements : TVStringArray;
-	Installations : TFPGObjectList<TJavaInstallation>;
-	Element, s : VString;
-
+constructor TParser.Create(const Params : TParameters; const Logger : TLogger);
 begin
-	Installations := TFPGObjectList<TJavaInstallation>.Create(True);
-	s := ExpandEnvStrings('%PATH%');
-	if s = '%PATH%' then Exit;
-	PathElements := SplitStr(s, [';']);
-	if PathElements = Nil then Exit;
-	for Element in PathElements do begin
-		s := ResolveJavawPath(Element);
-		Installation := GetJavawInfo(s);
-		if Installation <> Nil then begin
-			Installation.InstallationType := InferTypeFromPath(Element);
-			if not AddInstallationIfUnique(Installation, Installations) then Installation.Free;
-		end;
-	end;
+	FParams := Params;
+	FLogger := Logger;
+	FInstallations := TFPGObjectList<TJavaInstallation>.Create(True);
+	FJdkJreRegEx := TRegExpr.Create(JdkJreRE);
+	FModernRegEx := TRegExpr.Create(ModernJavaVersionRE);
+	FLegacyRegEx := TRegExpr.Create(LegacyJavaVersionRE);
+	FZuluRegEx := TRegExpr.Create(ZuluRE);
+	FLibericaRegEx := TRegExpr.Create(LibericaRE);
+end;
+
+destructor TParser.Destroy();
+begin
+	FLibericaRegEx.Free;
+	FZuluRegEx.Free;
+	FLegacyRegEx.Free;
+	FModernRegEx.Free;
+	FJdkJreRegEx.Free;
+	FInstallations.Free;
+	inherited Destroy;
 end;
 
 function TParameters.GetRegistryPaths() : TVStringList;
@@ -724,6 +716,11 @@ begin
 	end;
 end;
 
+function TParameters.GetLogLevel() : TLogLevel;
+begin
+	Result := FLogLevel;
+end;
+
 function TParameters.GetLogging() : Boolean;
 begin
 	Result := FIsLogging;
@@ -743,10 +740,12 @@ const
 	poEnvDel = '/DELENVSTR';
 	poLog = '/LOG';
 	poDialogDebug = '/DIALOGDEBUG';
+	poLogLevel = '/LOGLEVEL';
 
 var
 	parameterList : TVStringList;
 	i : Integer;
+	tmpLogLevel : TLogLevel;
 
 begin
 	parameterList := readParams();
@@ -777,6 +776,14 @@ begin
 			end
 			else if EqualStr(poEnvDel, parameterList[i], False) then begin
 				FEnvironmentVariables.RemoveMatching(parameterList[i + 1], False);
+				Inc(i);
+			end
+			else if EqualStr(poLogLevel, parameterList[i], False) then begin
+				tmpLogLevel := VStrToLogLevel(parameterList[i + 1]);
+				if tmpLogLevel = TLogLevel.INVALID then
+					NSISDialog('Invalid log level "' + parameterList[i + 1] + '"', 'Error', MB_OK, TDialaogIcon.Error)
+				else
+					FLogLevel := tmpLogLevel;
 				Inc(i);
 			end
 			else begin
@@ -883,6 +890,7 @@ begin
 	FEnvironmentVariables := TVStringList.Create();
 	FEnvironmentVariables.Add('%JAVA_HOME%');
 	FFilePaths := TVStringList.Create();
+	FLogLevel := TLogLevel.INFO;
 	FIsLogging := False;
 	FIsDialogDebug := False;
 end;
@@ -899,14 +907,14 @@ procedure Locate(const hwndParent: HWND; const string_size: integer; const varia
 
 var
 	parameters : TParameters;
+	parser : TParser;
 
 begin
 	Init(hwndParent, string_size, variables, stacktop);
 	parameters := TParameters.Create();
 	parameters.ParseParams();
-	ProcessRegistry(IsWOW64, parameters);
-	ProcessEnvironmentVariables(parameters);
-	ProcessOSPath();
+	parser := TParser.Create(parameters, Nil);
+	parser.Process();
 end;
 
 exports Locate;

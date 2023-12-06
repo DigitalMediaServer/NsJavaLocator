@@ -16,12 +16,13 @@ unit Utils;
 }
 
 {$mode Delphi}
+{$interfaces corba}
 {$SCOPEDENUMS ON}
 
 interface
 
 uses
-	Classes, Windows, NSIS, fgl;
+	Classes, Windows, fgl;
 
 type
 {$IFDEF UNICODE}
@@ -37,6 +38,16 @@ type
 
 	TInstallationType = (JDK, JRE, UNKNOWN);
 	TArchitecture = (UNKNOWN, x86, x64, ia64);
+	TLogLevel = (INVALID, ERROR, WARN, INFO, DEBUG);
+
+	{ TLogger }
+
+	TLogger = Interface
+		procedure Log(const Message : VString; const LogLevel : TLogLevel);
+		function IsWarn() : Boolean;
+		function IsInfo() : Boolean;
+		function IsDebug() : Boolean;
+	end;
 
 	{ TVStringList }
 
@@ -75,15 +86,17 @@ function EqualStr(str1, str2 : VString; CaseSensitive : Boolean = true) : Boolea
 function EndsWith(subStr : VString; const str : VString; CaseSensitive : Boolean = true) : Boolean;
 function InstallationTypeToStr(const InstallationType : TInstallationType) : VString;
 function ArchitectureToStr(const Architecture : TArchitecture; const BitsOnly : Boolean) : VString;
+function LogLevelToVStr(const LogLevel : TLogLevel) : VString;
+function VStrToLogLevel(const LogLevelStr : VString) : TLogLevel;
 function SplitStr(const Path : VString; const separators : array of VChar) : TVStringArray;
 function SplitPath(const Path : VString): TVStringArray;
 function SystemErrorToStr(MessageId : DWORD) : VString;
-function IsWOW64 : Boolean;
+function IsWOW64(const Logger : TLogger) : Boolean;
 function ExpandEnvStrings(const str : VString) : VString;
-function OpenRegKey(const rootKey : HKEY; const subKey : VString; samDesired : REGSAM; const Debug, DialogDebug : Boolean) : HKEY;
-function GetRegInt(const key : HKEY; const valueName : VString; const Debug, DialogDebug : Boolean) : TNullableQWord;
-function GetRegString(const key : HKEY; const valueName : VString; const Debug, DialogDebug : Boolean) : VString;
-function EnumerateRegSubKeys(const key : HKEY; const Debug, DialogDebug : Boolean) : TVStringList;
+function OpenRegKey(const rootKey : HKEY; const subKey : VString; samDesired : REGSAM; const Logger : TLogger) : HKEY;
+function GetRegInt(const key : HKEY; const valueName : VString; const Logger : TLogger) : TNullableQWord;
+function GetRegString(const key : HKEY; const valueName : VString; const Logger : TLogger) : VString;
+function EnumerateRegSubKeys(const key : HKEY; const Logger : TLogger) : TVStringList;
 function GetFileInfo(Path : VString) : TFileInfo;
 function GetPEArchitecture(Path: VString) : TArchitecture;
 
@@ -221,6 +234,27 @@ begin
 	end;
 end;
 
+function LogLevelToVStr(const LogLevel : TLogLevel) : VString;
+begin
+	case LogLevel of
+		TLogLevel.ERROR : Result := VString('Error');
+		TLogLevel.WARN : Result := VString('Warning');
+		TLogLevel.INFO : Result := VString('Information');
+		TLogLevel.DEBUG : Result := VString('Debug');
+	else Result := VString('Invalid');
+	end;
+end;
+
+function VStrToLogLevel(const LogLevelStr : VString) : TLogLevel;
+begin
+	Result := TLogLevel.INVALID;
+	if LogLevelStr = '' then Exit;
+	if EqualStr('ERROR', LogLevelStr, False) then Result := TLogLevel.ERROR
+	else if EqualStr('WARN', LogLevelStr, False) or EqualStr('WARNING', LogLevelStr, False) then Result := TLogLevel.WARN
+	else if EqualStr('INFO', LogLevelStr, False) or EqualStr('INFORMATION', LogLevelStr, False) then Result := TLogLevel.INFO
+	else if EqualStr('DEBUG', LogLevelStr, False) then Result := TLogLevel.DEBUG;
+end;
+
 function SplitStr(const Path : VString; const separators : array of VChar) : TVStringArray;
 
 const
@@ -333,7 +367,7 @@ begin
 	LocalFree(HLOCAL(lpBuffer));
 end;
 
-function IsWOW64 : Boolean;
+function IsWOW64(const Logger : TLogger) : Boolean;
 
 var
 	module : HModule;
@@ -350,7 +384,7 @@ begin
 	if @ptr <> Nil then begin
 		// IsWow64Process exists, so we're potentially running on 64-bit
 		if IsWow64Process(GetCurrentProcess, @res) then Result := res
-		else NSISDialog('Failed to query IsWow64Process', 'Error', MB_OK);
+		else if Logger <> Nil then Logger.Log('Failed to query isWow64Process', TLogLevel.ERROR);
 	end;
 end;
 
@@ -379,11 +413,10 @@ begin
 	SetLength(Result, retVal - 1);
 end;
 
-function OpenRegKey(const rootKey : HKEY; const subKey : VString; samDesired : REGSAM; const Debug, DialogDebug : Boolean) : HKEY;
+function OpenRegKey(const rootKey : HKEY; const subKey : VString; samDesired : REGSAM; const Logger : TLogger) : HKEY;
 
 var
 	retVal : LongInt;
-	ErrorMsg : VString;
 
 begin
 	if rootKey = 0 then begin
@@ -398,27 +431,19 @@ begin
 
 	if retVal <> ERROR_SUCCESS then begin
 		Result := 0;
-		if (retVal <> ERROR_FILE_NOT_FOUND) and (Debug or DialogDebug) then begin
-			ErrorMsg := SystemErrorToStr(retVal);
-			if Debug then LogMessage('Failed to open registry key "' + subkey + '" because: ' + ErrorMsg);
-			if DialogDebug then NSISDialog(
-				'Failed to open registry key "' + subkey + '" because: ' + ErrorMsg,
-				'Error',
-				MB_OK,
-				Error
-			);
+		if (retVal <> ERROR_FILE_NOT_FOUND) and (Logger <> Nil) then begin
+			Logger.Log('Failed to open registry key "' + subkey + '" because: ' + SystemErrorToStr(retVal), TLogLevel.ERROR);
 		end;
 	end;
 end;
 
 {$WARN 5058 off : Variable "$1" does not seem to be initialized}
 {$WARN 5060 off : Function result variable does not seem to be initialized}
-function GetRegInt(const key : HKEY; const valueName : VString; const Debug, DialogDebug : Boolean) : TNullableQWord;
+function GetRegInt(const key : HKEY; const valueName : VString; const Logger : TLogger) : TNullableQWord;
 
 var
 	retVal : LONG;
 	dataType : DWORD;
-	ErrorMsg : VString;
 	cbData : DWORD = 8;
 	data : array[0..7] of Byte;
 
@@ -444,14 +469,10 @@ begin
 		end;
 	end
 	else begin
-		if (retVal <> ERROR_FILE_NOT_FOUND) and (Debug or DialogDebug) then begin
-			ErrorMsg := SystemErrorToStr(retVal);
-			if Debug then LogMessage('Failed to get registry value "' + valueName + '" because: ' + ErrorMsg);
-			if DialogDebug then NSISDialog(
-				'Failed to get registry value "' + valueName + '" because: ' + ErrorMsg,
-				'Error',
-				MB_OK,
-				Error
+		if (retVal <> ERROR_FILE_NOT_FOUND) and (Logger <> Nil) then begin
+			Logger.Log(
+				'Failed to get registry value "' + valueName + '" because: ' + SystemErrorToStr(retVal),
+				TLogLevel.ERROR
 			);
 		end;
 	end;
@@ -459,11 +480,10 @@ end;
 {$WARN 5058 on : Variable "$1" does not seem to be initialized}
 {$WARN 5060 on : Function result variable does not seem to be initialized}
 
-function GetRegString(const key : HKEY; const valueName : VString; const Debug, DialogDebug : Boolean) : VString;
+function GetRegString(const key : HKEY; const valueName : VString; const Logger : TLogger) : VString;
 var
 	retVal : LONG;
 	dataType : DWORD;
-	ErrorMsg : VString;
 {$IFDEF UNICODE}
 	cbData : DWORD = 2050;
 	data : array[0..1024] of WideChar;
@@ -504,26 +524,21 @@ begin
 		end;
 	end
 	else begin
-		if (retVal <> ERROR_FILE_NOT_FOUND) and (Debug or DialogDebug) then begin
-			ErrorMsg := SystemErrorToStr(retVal);
-			if Debug then LogMessage('Failed to get registry value "' + valueName + '" because: ' + ErrorMsg);
-			if DialogDebug then NSISDialog(
-				'Failed to get registry value "' + valueName + '" because: ' + ErrorMsg,
-				'Error',
-				MB_OK,
-				Error
+		if (retVal <> ERROR_FILE_NOT_FOUND) and (Logger <> Nil) then begin
+			Logger.Log(
+				'Failed to get registry value "' + valueName + '" because: ' + SystemErrorToStr(retVal),
+				TLogLevel.ERROR
 			);
 		end;
 	end;
 end;
 
-function EnumerateRegSubKeys(const key : HKEY; const Debug, DialogDebug : Boolean) : TVStringList;
+function EnumerateRegSubKeys(const key : HKEY; const Logger : TLogger) : TVStringList;
 
 var
 	subKeys : DWORD = 0;
 	lpcchName : DWORD;
 	retVal : LONG;
-	ErrorMsg : VString;
 	i : Integer;
 {$IFDEF UNICODE}
 	lpName : PWideChar;
@@ -536,11 +551,11 @@ begin
 	if key = 0 then Exit;
 	retVal := RegQueryInfoKeyA(key, Nil, Nil, Nil, @subKeys, Nil, Nil, Nil, Nil, Nil, Nil, Nil);
 	if retVal <> ERROR_SUCCESS then begin
-		if Debug or DialogDebug then begin
-			ErrorMsg := SystemErrorToStr(retVal);
-			if Debug then LogMessage('Failed to enumerate registry sub keys: ' + ErrorMsg);
-			if DialogDebug then NSISDialog('Failed to enumerate registry sub keys: ' + ErrorMsg, 'Error', MB_OK, Error);
-		end;
+		if Logger <> Nil then
+			Logger.Log(
+				'Failed to enumerate registry sub keys: ' + SystemErrorToStr(retVal),
+				TLogLevel.ERROR
+			);
 	end
 	else if (subKeys > 0) then begin
 {$IFDEF UNICODE}
@@ -563,12 +578,11 @@ begin
 				end
 {$ENDIF}
 				else if retVal = ERROR_NO_MORE_ITEMS then break
-				else begin
-					if Debug or DialogDebug then begin
-						ErrorMsg := SystemErrorToStr(retVal);
-						if Debug then LogMessage('Failed to retrieve registry sub key name: ' + ErrorMsg);
-						if DialogDebug then NSISDialog('Failed to retrieve registry sub key name: ' + ErrorMsg, 'Error', MB_OK, Error);
-					end;
+				else if (Logger <> Nil) then begin
+					Logger.Log(
+						'Failed to retrieve registry sub key name: ' + SystemErrorToStr(retVal),
+						TLogLevel.ERROR
+					);
 				end;
 			end;
 		finally
