@@ -16,6 +16,7 @@ unit Core;
 }
 
 {$mode Delphi}
+{$interfaces corba}
 
 interface
 
@@ -23,6 +24,15 @@ uses
 	Classes, SysUtils, Utils, fgl;
 
 type
+
+	{ TSettings }
+
+	TSettings = interface
+		function GetRegistryPaths() : TVStringList;
+		function GetEnvironmentVariables() : TVStringList;
+		function GetFilePaths() : TVStringList;
+	end;
+
 	{ TJavaInstallation }
 
 	TJavaInstallation = class(TObject)

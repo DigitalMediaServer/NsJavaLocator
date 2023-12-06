@@ -37,7 +37,7 @@ type
 
 	{ TParameters }
 
-	TParameters = class(TObject)
+	TParameters = class(TObject, TSettings)
 	private
 		FRegistryPaths : TVStringList;
 		FEnvironmentVariables : TVStringList;
@@ -70,7 +70,7 @@ type
 	TParser = class(TObject)
 	protected
 		FLogger : TLogger;
-		FParams : TParameters;
+		FSettings : TSettings;
 		FInstallations : TFPGObjectList<TJavaInstallation>;
 		FJdkJreRegEx : TRegExpr;
 		FModernRegEx : TRegExpr;
@@ -92,7 +92,7 @@ type
 		procedure ProcessRegistry(const Is64 : Boolean);
 	public
 		procedure Process();
-		constructor Create(const Params : TParameters; const Logger : TLogger);
+		constructor Create(const Settings : TSettings; const Logger : TLogger);
 		destructor Destroy(); override;
 	published
 		property Installations : TFPGObjectList<TJavaInstallation> read GetInstallations;
@@ -478,7 +478,7 @@ var
 	envVar, s : VString;
 
 begin
-	for envVar in FParams.EnvironmentVariables do begin
+	for envVar in FSettings.GetEnvironmentVariables do begin
 		s := ExpandEnvStrings(envVar);
 		if s <> envVar then begin
 			InstallationType := InferTypeFromPath(s);
@@ -533,7 +533,7 @@ begin
 			else samDesired := baseSamDesired or KEY_WOW64_64KEY;
 		end;
 
-		for subKey in FParams.RegistryPaths do begin
+		for subKey in FSettings.GetRegistryPaths do begin
 			h := OpenRegKey(rootKey, subKey, samDesired, FLogger);
 			if h <> 0 then begin
 				try
@@ -574,9 +574,9 @@ begin
 	end;
 end;
 
-constructor TParser.Create(const Params : TParameters; const Logger : TLogger);
+constructor TParser.Create(const Settings : TSettings; const Logger : TLogger);
 begin
-	FParams := Params;
+	FSettings := Settings;
 	FLogger := Logger;
 	FInstallations := TFPGObjectList<TJavaInstallation>.Create(True);
 	FJdkJreRegEx := TRegExpr.Create(JdkJreRE);
