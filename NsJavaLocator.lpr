@@ -65,6 +65,22 @@ type
 		property IsDialogDebug : Boolean read GetDialogDebug;
 	end;
 
+	{ TRunner }
+
+	TRunner = class(TObject, TLogger)
+	private
+		FParams : TParameters;
+		FLogLevel : TLogLevel;
+	public
+		procedure Log(const Message : VString; const LogLevel : TLogLevel);
+		function IsWarn() : Boolean;
+		function IsInfo() : Boolean;
+		function IsDebug() : Boolean;
+		procedure Run();
+		constructor Create();
+		destructor Destroy(); override;
+	end;
+
 	{ TParser }
 
 	TParser = class(TObject)
@@ -139,6 +155,75 @@ begin
 		Result.Build := FileInfo.ProductVersionRevision;
 		Result.Path := Path;
 	end;
+end;
+
+{ TRunner }
+
+procedure TRunner.Log(const Message : VString; const LogLevel : TLogLevel);
+
+var
+	Icon : TDialaogIcon;
+
+begin
+	if LogLevel > FLogLevel then Exit;
+	if FParams.IsLogging then begin
+		if LogLevel = TLogLevel.ERROR then LogMessage('Error: ' + Message)
+		else if LogLevel = TLogLevel.WARN then LogMessage('Warning: ' + Message)
+		else LogMessage(Message);
+	end;
+	if FParams.IsDialogDebug then begin
+		case LogLevel of
+			TLogLevel.ERROR: Icon := TDialaogIcon.Error;
+			TLogLevel.WARN: Icon := TDialaogIcon.Warning;
+			TLogLevel.INFO: Icon := TDialaogIcon.Info;
+			TLogLevel.DEBUG: Icon := TDialaogIcon.Info;
+		else Icon := TDialaogIcon.None;
+		end;
+		NSISDialog(Message, LogLevelToVStr(LogLevel), MB_OK, Icon);
+	end;
+end;
+
+function TRunner.IsWarn() : Boolean;
+begin
+	Result := FLogLevel >= TLogLevel.WARN;
+end;
+
+function TRunner.IsInfo() : Boolean;
+begin
+	Result := FLogLevel >= TLogLevel.INFO;
+end;
+
+function TRunner.IsDebug() : Boolean;
+begin
+	Result := FLogLevel >= TLogLevel.DEBUG;
+end;
+
+procedure TRunner.Run();
+
+var
+	Parser : TParser;
+
+begin
+	FParams.ParseParams();
+	FLogLevel := FParams.LogLevel;
+	Parser := TParser.Create(FParams, Self);
+	try
+		Parser.Process();
+	finally
+		Parser.Free();
+	end;
+end;
+
+constructor TRunner.Create();
+begin
+	FParams := TParameters.Create();
+	FLogLevel := TLogLevel.INFO;
+end;
+
+destructor TRunner.Destroy();
+begin
+	FParams.Free();
+	inherited Destroy;
 end;
 
 function TParser.GetInstallations : TFPGObjectList<TJavaInstallation>;
@@ -816,15 +901,16 @@ end;
 procedure Locate(const hwndParent: HWND; const string_size: integer; const variables: NSISPTChar; const stacktop: pointer); cdecl;
 
 var
-	parameters : TParameters;
-	parser : TParser;
+	runner : TRunner;
 
 begin
 	Init(hwndParent, string_size, variables, stacktop);
-	parameters := TParameters.Create();
-	parameters.ParseParams();
-	parser := TParser.Create(parameters, Nil);
-	parser.Process();
+	runner := TRunner.Create();
+	try
+		runner.Run();
+	finally
+		runner.Free();
+	end;
 end;
 
 exports Locate;
