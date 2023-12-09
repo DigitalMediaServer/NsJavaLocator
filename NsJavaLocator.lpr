@@ -41,6 +41,7 @@ type
 		FRegistryPaths : TVStringList;
 		FEnvironmentVariables : TVStringList;
 		FFilePaths : TVStringList;
+		FFilteredPaths : TVStringList;
 		FLogLevel : TLogLevel;
 		FIsLogging : Boolean;
 		FIsDialogDebug : Boolean;
@@ -52,6 +53,7 @@ type
 		function GetRegistryPaths() : TVStringList;
 		function GetEnvironmentVariables() : TVStringList;
 		function GetFilePaths() : TVStringList;
+		function GetFilteredPaths() : TVStringList;
 		procedure ParseParams();
 		constructor Create();
 		destructor Destroy(); override;
@@ -59,6 +61,7 @@ type
 		property RegistryPaths : TVStringList read GetRegistryPaths;
 		property EnvironmentVariables : TVStringList read GetEnvironmentVariables;
 		property FilePaths : TVStringList read GetFilePaths;
+		property FilteredPaths : TVStringList read GetFilteredPaths;
 		property LogLevel : TLogLevel read GetLogLevel;
 		property IsLogging : Boolean read GetLogging;
 		property IsDialogDebug : Boolean read GetDialogDebug;
@@ -164,6 +167,11 @@ begin
 	Result := FFilePaths;
 end;
 
+function TParameters.GetFilteredPaths() : TVStringList;
+begin
+	Result := FFilteredPaths;
+end;
+
 function TParameters.ReadParams() : TVStringList;
 
 var
@@ -200,6 +208,8 @@ const
 	poRegDel = '/DELREGPATH';
 	poEnv = '/ENVSTR';
 	poEnvDel = '/DELENVSTR';
+	poFilterAdd = '/ADDFILTER';
+	poFilterDel = '/DELFILTER';
 	poLog = '/LOG';
 	poDialogDebug = '/DIALOGDEBUG';
 	poLogLevel = '/LOGLEVEL';
@@ -207,6 +217,7 @@ const
 var
 	parameterList : TVStringList;
 	i : Integer;
+	s, dialogStr : VString;
 	tmpLogLevel : TLogLevel;
 
 begin
@@ -240,6 +251,18 @@ begin
 				FEnvironmentVariables.RemoveMatching(parameterList[i + 1], False);
 				Inc(i);
 			end
+			else if EqualStr(poFilterAdd, parameterList[i], False) then begin
+				s := ExpandEnvStrings(parameterList[i + 1]);
+				if (s <> '') and (s <> parameterList[i + 1]) then FFilteredPaths.AddUnique(s, False)
+				else FFilteredPaths.AddUnique(parameterList[i + 1], False);
+				Inc(i);
+			end
+			else if EqualStr(poFilterDel, parameterList[i], False) then begin
+				FFilteredPaths.RemoveMatching(parameterList[i + 1], False);
+				s := ExpandEnvStrings(parameterList[i + 1]);
+				if (s <> '') and (s <> parameterList[i + 1]) then FFilteredPaths.RemoveMatching(s, False);
+				Inc(i);
+			end
 			else if EqualStr(poLogLevel, parameterList[i], False) then begin
 				tmpLogLevel := VStrToLogLevel(parameterList[i + 1]);
 				if tmpLogLevel = TLogLevel.INVALID then
@@ -258,6 +281,40 @@ begin
 		Inc(i);
 	end;
 	parameterList.Free;
+
+	for i := 0 to FFilePaths.Count - 1 do begin
+		s := ExpandEnvStrings(FFilePaths[i]);
+		if s <> FFilePaths[i] then begin
+			FFilePaths[i] := s;
+		end
+	end;
+
+	if (FIsLogging or FIsDialogDebug) and (FLogLevel >= TLogLevel.DEBUG) then begin
+		dialogStr := '';
+		for i := 0 to FRegistryPaths.Count - 1 do begin
+			if FIsLogging then LogMessage('Registry Path ' + IntToVStr(i + 1) + ': ' + FRegistryPaths[i]);
+			if FIsDialogDebug then dialogStr := dialogStr + 'Registry Path ' + IntToVStr(i + 1) + ': ' + FRegistryPaths[i] + #13#10;
+		end;
+		if dialogStr <> '' then NSISDialog(dialogStr, 'Registry Paths');
+		dialogStr := '';
+		for i := 0 to FEnvironmentVariables.Count - 1 do begin
+			if FIsLogging then LogMessage('Environment Variable ' + IntToVStr(i + 1) + ': ' + FEnvironmentVariables[i]);
+			if FIsDialogDebug then dialogStr := dialogStr + 'Environment Variable ' + IntToVStr(i + 1) + ': ' + FEnvironmentVariables[i] + #13#10;
+		end;
+		if dialogStr <> '' then NSISDialog(dialogStr, 'Environment Variables');
+		dialogStr := '';
+		for i := 0 to FFilePaths.Count - 1 do begin
+			if FIsLogging then LogMessage('File Path ' + IntToVStr(i + 1) + ': ' + FFilePaths[i]);
+			if FIsDialogDebug then dialogStr := dialogStr + 'File Path ' + IntToVStr(i + 1) + ': ' + FFilePaths[i] +#13#10;
+		end;
+		if dialogStr <> '' then NSISDialog(dialogStr, 'File Paths');
+		dialogStr := '';
+		for i := 0 to FFilteredPaths.Count - 1 do begin
+			if FIsLogging then LogMessage('Filtered Path ' + IntToVStr(i + 1) + ': ' + FFilteredPaths[i]);
+			if FIsDialogDebug then dialogStr := dialogStr + 'Filtered Path ' + IntToVStr(i + 1) + ': ' + FFilteredPaths[i] + #13#10;
+		end;
+		if dialogStr <> '' then NSISDialog(dialogStr, 'Filtered Paths');
+	end;
 end;
 
 constructor TParameters.Create();
@@ -340,9 +397,18 @@ const
 		'SOFTWARE\Semeru',
 		'SOFTWARE\BellSoft\Liberica'
 	);
+	StandardFilteredPaths : array [0..5] of VString = (
+		'%commonprogramfiles%\Oracle\Java\javapath',
+		'%commonprogramfiles(x86)%\Oracle\Java\javapath',
+		'%commonprogramW6432%\Oracle\Java\javapath',
+		'%ALLUSERSPROFILE%\Oracle\Java\javapath',
+		'%SystemRoot%\system32',
+		'%SystemRoot%\SysWOW64'
+	);
 
 var
 	i : Integer;
+	s : VString;
 
 begin
 	FRegistryPaths := TVStringList.Create();
@@ -352,6 +418,12 @@ begin
 	FEnvironmentVariables := TVStringList.Create();
 	FEnvironmentVariables.Add('%JAVA_HOME%');
 	FFilePaths := TVStringList.Create();
+	FFilteredPaths := TVStringList.Create;
+	for i := 0 to high(StandardFilteredPaths) do begin
+		s := ExpandEnvStrings(StandardFilteredPaths[i]);
+		// Only add filters that expand - otherwise they don't exist on the system
+		if s <> StandardFilteredPaths[i] then FFilteredPaths.AddUnique(s, False);
+	end;
 	FLogLevel := TLogLevel.INFO;
 	FIsLogging := False;
 	FIsDialogDebug := False;
@@ -359,6 +431,7 @@ end;
 
 destructor TParameters.Destroy();
 begin
+	FFilteredPaths.Free();
 	FFilePaths.Free();
 	FEnvironmentVariables.Free();
 	FRegistryPaths.Free();

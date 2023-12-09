@@ -84,6 +84,7 @@ function VStrToIntDef(const ns : VString; Default : LongInt) : LongInt;
 function BoolToVStr(Value : Boolean) : VString;
 function EqualStr(str1, str2 : VString; CaseSensitive : Boolean = true) : Boolean;
 function EndsWith(subStr : VString; const str : VString; CaseSensitive : Boolean = true) : Boolean;
+function StartsWith(subStr : VString; const str : VString; CaseSensitive : Boolean = true) : Boolean;
 function InstallationTypeToStr(const InstallationType : TInstallationType) : VString;
 function ArchitectureToStr(const Architecture : TArchitecture; const BitsOnly : Boolean) : VString;
 function LogLevelToVStr(const LogLevel : TLogLevel) : VString;
@@ -199,6 +200,32 @@ begin
 		Result := lstrcmpiW(LPCWSTR(endStr), LPCWSTR(subStr)) = 0;
 {$ELSE}
 		Result := lstrcmpiA(LPCSTR(endStr), LPCSTR(subStr)) = 0;
+{$ENDIF}
+	end;
+end;
+
+function StartsWith(subStr : VString; const str : VString; CaseSensitive : Boolean = true) : Boolean;
+
+var
+	subLen, len, i : Integer;
+	startStr : VString;
+
+begin
+	Result := False;
+	subLen := Length(subStr);
+	len := Length(str);
+	if (subLen = 0) or (len = 0) or (len < subLen) then Exit;
+	if CaseSensitive then begin
+		for i := 1 to subLen do if str[i] <> subStr[i] then Exit;
+		Result := true;
+	end
+	else begin
+		UniqueString(subStr);
+		startStr := Copy(str, 1, subLen);
+{$IFDEF UNICODE}
+		Result := lstrcmpiW(LPCWSTR(startStr), LPCWSTR(subStr)) = 0;
+{$ELSE}
+		Result := lstrcmpiA(LPCSTR(startStr), LPCSTR(subStr)) = 0;
 {$ENDIF}
 	end;
 end;

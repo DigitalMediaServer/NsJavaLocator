@@ -31,6 +31,7 @@ type
 		function GetRegistryPaths() : TVStringList;
 		function GetEnvironmentVariables() : TVStringList;
 		function GetFilePaths() : TVStringList;
+		function GetFilteredPaths() : TVStringList;
 	end;
 
 	{ TJavaInstallation }
@@ -73,6 +74,8 @@ type
 		function ParseJavaSoft(hk : HKEY; const samDesired : REGSAM) : Integer;
 		function ParseZuluLiberica(hk : HKEY; const samDesired : REGSAM) : Integer;
 		procedure ProcessEnvironmentVariables();
+		procedure ProcessFilePaths();
+		procedure ProcessFilteredPaths();
 		procedure ProcessOSPath();
 		procedure ProcessRegistry(const Is64 : Boolean);
 	public
@@ -507,6 +510,51 @@ begin
 	end;
 end;
 
+procedure TParser.ProcessFilePaths();
+
+var
+	Installation : TJavaInstallation;
+	InstallationType : TInstallationType;
+	FilePath, s : VString;
+
+begin
+	for FilePath in FSettings.GetFilePaths do begin
+		InstallationType := InferTypeFromPath(FilePath);
+		s := ResolveJavawPath(FilePath);
+		Installation := GetJavawInfo(s);
+		if Installation <> Nil then begin
+			Installation.InstallationType := InstallationType;
+			AddInstallationIfUnique(Installation, FInstallations);
+		end;
+	end;
+end;
+
+procedure TParser.ProcessFilteredPaths();
+
+var
+	FilteredPaths : TVStringList;
+	i : Integer;
+	s, curPath : VString;
+
+begin
+	FilteredPaths := FSettings.GetFilteredPaths;
+	if (FilteredPaths = Nil) or (FilteredPaths.Count = 0) then Exit;
+
+	i := 0;
+	while i < FInstallations.Count do begin
+		curPath := FInstallations[i].Path;
+		for s in FilteredPaths do begin
+			if StartsWith(s, curPath, False) then begin
+				if FLogger.IsDebug() then FLogger.Log('Filtered out installation: ' + curPath, TLogLevel.DEBUG);
+				FInstallations.Delete(i);
+				Dec(i);
+				Break;
+			end;
+		end;
+		Inc(i);
+	end;
+end;
+
 procedure TParser.ProcessOSPath();
 
 var
@@ -574,6 +622,8 @@ begin
 	ProcessRegistry(IsWOW64(FLogger));
 	ProcessEnvironmentVariables();
 	ProcessOSPath();
+	ProcessFilePaths();
+	ProcessFilteredPaths();
 
 	if (FLogger <> Nil) and (FLogger.isDebug()) then begin
 		for i := 0 to FInstallations.Count - 1 do begin
