@@ -42,6 +42,9 @@ type
 		FEnvironmentVariables : TVStringList;
 		FFilePaths : TVStringList;
 		FFilteredPaths : TVStringList;
+		FMinVersion : VString;
+		FMaxVersion : VString;
+		FOptimalVersion : VString;
 		FLogLevel : TLogLevel;
 		FIsLogging : Boolean;
 		FIsDialogDebug : Boolean;
@@ -54,6 +57,9 @@ type
 		function GetEnvironmentVariables() : TVStringList;
 		function GetFilePaths() : TVStringList;
 		function GetFilteredPaths() : TVStringList;
+		function GetMinVersion() : VString;
+		function GetMaxVersion() : VString;
+		function GetOptimalVersion() : VString;
 		procedure ParseParams();
 		constructor Create();
 		destructor Destroy(); override;
@@ -62,6 +68,9 @@ type
 		property EnvironmentVariables : TVStringList read GetEnvironmentVariables;
 		property FilePaths : TVStringList read GetFilePaths;
 		property FilteredPaths : TVStringList read GetFilteredPaths;
+		property MaxVersion : VString read GetMaxVersion;
+		property MinVersion : VString read GetMinVersion;
+		property OptimalVersion : VString read GetOptimalVersion;
 		property LogLevel : TLogLevel read GetLogLevel;
 		property IsLogging : Boolean read GetLogging;
 		property IsDialogDebug : Boolean read GetDialogDebug;
@@ -128,6 +137,7 @@ procedure TRunner.Run();
 
 var
 	Parser : TParser;
+	Evaluator : TEvaluator;
 
 begin
 	FParams.ParseParams();
@@ -135,6 +145,12 @@ begin
 	Parser := TParser.Create(FParams, Self);
 	try
 		Parser.Process();
+		Evaluator := TEvaluator.Create(Parser.Installations, FParams, Self);
+		try
+			Evaluator.Process();
+		finally
+			Evaluator.Free();
+		end;
 	finally
 		Parser.Free();
 	end;
@@ -170,6 +186,21 @@ end;
 function TParameters.GetFilteredPaths() : TVStringList;
 begin
 	Result := FFilteredPaths;
+end;
+
+function TParameters.GetMinVersion() : VString;
+begin
+	Result := FMinVersion;
+end;
+
+function TParameters.GetMaxVersion() : VString;
+begin
+	Result := FMaxVersion;
+end;
+
+function TParameters.GetOptimalVersion() : VString;
+begin
+	Result := FOptimalVersion;
 end;
 
 function TParameters.ReadParams() : TVStringList;
@@ -210,6 +241,9 @@ const
 	poEnvDel = '/DELENVSTR';
 	poFilterAdd = '/ADDFILTER';
 	poFilterDel = '/DELFILTER';
+	poMinVer = '/MINVER';
+	poMaxVer = '/MAXVER';
+	poOptVer = '/OPTVER';
 	poLog = '/LOG';
 	poDialogDebug = '/DIALOGDEBUG';
 	poLogLevel = '/LOGLEVEL';
@@ -261,6 +295,18 @@ begin
 				FFilteredPaths.RemoveMatching(parameterList[i + 1], False);
 				s := ExpandEnvStrings(parameterList[i + 1]);
 				if (s <> '') and (s <> parameterList[i + 1]) then FFilteredPaths.RemoveMatching(s, False);
+				Inc(i);
+			end
+			else if EqualStr(poMinVer, parameterList[i], False) then begin
+				FMinVersion := parameterList[i + 1];
+				Inc(i);
+			end
+			else if EqualStr(poMaxVer, parameterList[i], False) then begin
+				FMaxVersion := parameterList[i + 1];
+				Inc(i);
+			end
+			else if EqualStr(poOptVer, parameterList[i], False) then begin
+				FOptimalVersion := parameterList[i + 1];
 				Inc(i);
 			end
 			else if EqualStr(poLogLevel, parameterList[i], False) then begin
@@ -424,6 +470,9 @@ begin
 		// Only add filters that expand - otherwise they don't exist on the system
 		if s <> StandardFilteredPaths[i] then FFilteredPaths.AddUnique(s, False);
 	end;
+	FMinVersion := '';
+	FMaxVersion := '';
+	FOptimalVersion := '';
 	FLogLevel := TLogLevel.INFO;
 	FIsLogging := False;
 	FIsDialogDebug := False;

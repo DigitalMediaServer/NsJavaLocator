@@ -24,6 +24,13 @@ uses
 	Classes, Windows, SysUtils, Utils, RegExpr, fgl;
 
 type
+	TCompareType = (less, lessOrEqual, equal, moreOrEqual, more);
+	TVersionCondition = record
+		Valid : Boolean;
+		CompareType : TCompareType;
+		Version : Integer;
+		Build : Integer;
+	end;
 
 	{ TSettings }
 
@@ -32,6 +39,9 @@ type
 		function GetEnvironmentVariables() : TVStringList;
 		function GetFilePaths() : TVStringList;
 		function GetFilteredPaths() : TVStringList;
+		function GetMinVersion() : VString;
+		function GetMaxVersion() : VString;
+		function GetOptimalVersion() : VString;
 	end;
 
 	{ TJavaInstallation }
@@ -84,6 +94,26 @@ type
 		destructor Destroy(); override;
 	published
 		property Installations : TFPGObjectList<TJavaInstallation> read GetInstallations;
+	end;
+
+	{ TEvaluator }
+
+	TEvaluator = class(TObject)
+	protected
+		FLogger : TLogger;
+		FSettings : TSettings;
+		FInstallations : TFPGObjectList<TJavaInstallation>;
+		FVersionExpRegEx : TRegExpr;
+		function ParseVersionExpression(VersionExpr : VString) : TVersionCondition;
+		procedure Exclude();
+	public
+		procedure Process();
+		constructor Create(
+			const Installations : TFPGObjectList<TJavaInstallation>;
+			const Settings : TSettings;
+			const Logger : TLogger
+		);
+		destructor Destroy(); override;
 	end;
 
 function GetJavawInfo(Path : VString) : TJavaInstallation;
@@ -659,6 +689,175 @@ begin
 	FModernRegEx.Free;
 	FJdkJreRegEx.Free;
 	FInstallations.Free;
+	inherited Destroy;
+end;
+
+{ TEvaluator }
+
+function TEvaluator.ParseVersionExpression(VersionExpr : VString) : TVersionCondition;
+
+var
+	s : VString;
+
+begin
+	Result.Valid := False;
+	Result.CompareType := TCompareType.equal;
+	Result.Version := -1;
+	Result.Build := -1;
+	if VersionExpr = '' then Exit;
+	if FVersionExpRegEx.Exec(VersionExpr) then begin
+		s := FVersionExpRegEx.Match[1];
+		if (s = '') or (s = '=') then Result.CompareType := TCompareType.equal
+		else if s = '<' then Result.CompareType := TCompareType.less
+		else if s = '<=' then Result.CompareType := TCompareType.lessOrEqual
+		else if s = '>=' then Result.CompareType := TCompareType.moreOrEqual
+		else if s = '>' then Result.CompareType := TCompareType.more;
+		Result.Version := VStrToIntDef(FVersionExpRegEx.Match[2], -1);
+		if Result.Version >= 0 then Result.Valid := True;
+		Result.Build := VStrToIntDef(FVersionExpRegEx.Match[3], -1);
+	end;
+end;
+
+procedure TEvaluator.Exclude;
+
+var
+	min, max : TVersionCondition;
+	i : Integer;
+
+begin
+	min := ParseVersionExpression(FSettings.GetMinVersion());
+	max := ParseVersionExpression(FSettings.GetMaxVersion());
+	if FLogger <> Nil then begin
+		if (min.Valid = False) and (FSettings.GetMinVersion() <> '') then
+			FLogger.Log('Ignoring invalid minimum version expression: ' + FSettings.GetMinVersion(), TLogLevel.WARN);
+		if (max.Valid = False) and (FSettings.GetMaxVersion() <> '') then
+			FLogger.Log('Ignoring invalid maximum version expression: ' + FSettings.GetMaxVersion(), TLogLevel.WARN);
+	end;
+	if min.Valid and ((min.CompareType = TCompareType.less) or (min.CompareType = TCompareType.lessOrEqual)) then begin
+		if FLogger <> Nil then
+			FLogger.Log('Ignoring invalid minimum version expression: ' + FSettings.GetMinVersion(), TLogLevel.WARN);
+		min.Valid := False;
+	end;
+	if max.Valid and ((max.CompareType = TCompareType.more) or (max.CompareType = TCompareType.moreOrEqual)) then begin
+		if FLogger <> Nil then
+			FLogger.Log('Ignoring invalid maximum version expression: ' + FSettings.GetMaxVersion(), TLogLevel.WARN);
+		max.Valid := False;
+	end;
+
+	if min.Valid or max.Valid then begin
+		i := 0;
+		while i < FInstallations.Count do begin
+			if FInstallations[i].Version < 1 then begin
+				if FLogger <> Nil then FLogger.Log(
+					'Excluding installation because the version is unknown: ' + FInstallations[i].Path,
+					TLogLevel.INFO
+				);
+				FInstallations.Delete(i);
+				Continue;
+			end;
+			if min.Valid then begin
+				if (
+					(min.CompareType = TCompareType.more) and (FInstallations[i].Version <= min.Version) and (min.Build < 0)
+				) or (
+					FInstallations[i].Version < min.Version
+				) then begin
+					if FLogger <> Nil then FLogger.Log(
+						'Excluding installation because the version (' + IntToVStr(FInstallations[i].Version) +
+						') is too low: ' + FInstallations[i].Path,
+						TLogLevel.INFO
+					);
+					FInstallations.Delete(i);
+					Continue;
+				end;
+				if (min.Version = FInstallations[i].Version) and (min.Build >= 0) then begin
+					if FInstallations[i].Build < 0 then begin
+						if FLogger <> Nil then FLogger.Log(
+							'Excluding installation because the build is unknown: ' + FInstallations[i].Path,
+							TLogLevel.INFO
+						);
+						FInstallations.Delete(i);
+						Continue;
+					end;
+					if (
+						(min.CompareType = TCompareType.more) and (FInstallations[i].Build <= min.Build)
+					) or (
+						FInstallations[i].Build < min.Build
+					) then begin
+						if FLogger <> Nil then FLogger.Log(
+							'Excluding installation because the build (' + IntToVStr(FInstallations[i].Build) +
+							') is too low: ' + FInstallations[i].Path,
+							TLogLevel.INFO
+						);
+						FInstallations.Delete(i);
+						Continue;
+					end;
+				end
+			end;
+
+			if max.Valid then begin
+				if (
+					(max.CompareType = TCompareType.less) and (FInstallations[i].Version >= max.Version) and (max.Build < 0)
+				) or (
+					FInstallations[i].Version > max.Version
+				) then begin
+					if FLogger <> Nil then FLogger.Log(
+						'Excluding installation because the version (' + IntToVStr(FInstallations[i].Version) +
+						') is too high: ' + FInstallations[i].Path,
+						TLogLevel.INFO
+					);
+					FInstallations.Delete(i);
+					Continue;
+				end;
+				if (max.Version = FInstallations[i].Version) and (max.Build >= 0) then begin
+					if FInstallations[i].Build < 0 then begin
+						if FLogger <> Nil then FLogger.Log(
+							'Excluding installation because the build is unknown: ' + FInstallations[i].Path,
+							TLogLevel.INFO
+						);
+						FInstallations.Delete(i);
+						Continue;
+					end;
+					if (
+						(max.CompareType = TCompareType.less) and (FInstallations[i].Build >= max.Build)
+					) or (
+						FInstallations[i].Build > max.Build
+					) then begin
+						if FLogger <> Nil then FLogger.Log(
+							'Excluding installation because the build (' + IntToVStr(FInstallations[i].Build) +
+							') is too high: ' + FInstallations[i].Path,
+							TLogLevel.INFO
+						);
+						FInstallations.Delete(i);
+						Continue;
+					end;
+				end
+			end;
+			Inc(i);
+		end;
+	end;
+end;
+
+procedure TEvaluator.Process();
+
+begin
+	Exclude();
+end;
+
+constructor TEvaluator.Create(
+	const Installations : TFPGObjectList<TJavaInstallation>;
+	const Settings : TSettings;
+	const Logger : TLogger
+);
+begin
+	FInstallations := Installations;
+	FSettings := Settings;
+	FLogger := Logger;
+	FVersionExpRegEx := TRegExpr.Create('^\s*(<|<=|=|>=|>)?\s*(\d+)(?:\.(\d+))?\s*$');
+end;
+
+destructor TEvaluator.Destroy;
+begin
+	FVersionExpRegEx.Free;
 	inherited Destroy;
 end;
 
