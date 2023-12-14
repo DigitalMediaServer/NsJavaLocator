@@ -107,6 +107,8 @@ type
 		FVersionExpRegEx : TRegExpr;
 		function ParseVersionExpression(VersionExpr : VString) : TVersionCondition;
 		procedure Exclude();
+		procedure Sort();
+		procedure Report();
 	public
 		procedure Process();
 		constructor Create(
@@ -118,6 +120,7 @@ type
 	end;
 
 function GetJavawInfo(Path : VString) : TJavaInstallation;
+function ConditionTrue(const Condition : TVersionCondition; const Installation : TJavaInstallation) : Boolean;
 {
 	TFGObjectList "helper" methods
 	Since TFGObjectLIst isn't made to be subclassed, these methods are a "quick and dirty" way to ensure item uniqueness.
@@ -842,10 +845,87 @@ begin
 	end;
 end;
 
+function CompareInstallations(const inst1, inst2 : TJavaInstallation) : Integer;
+
+begin
+	Result := 0;
+	if (inst1 = Nil) and (inst2 = Nil) then Exit;
+	if inst1 = Nil then Result := 1
+	else if inst2 = Nil then Result := -1
+	else begin
+		if inst1.Optimal <> inst2.Optimal then begin
+			if inst1.Optimal then Result := -1
+			else Result := 1;
+		end
+		else if inst1.Architecture <> inst2.Architecture then Result := Ord(inst2.Architecture) - Ord(inst1.Architecture)
+		else if inst1.Version <> inst2.Version then Result := inst2.Version - inst1.Version
+		else if inst1.Build <> inst2.Build then Result := inst2.Build - inst1.Build;
+	end;
+end;
+
+procedure TEvaluator.Sort();
+
+var
+	opt : TVersionCondition;
+	i : Integer;
+
+begin
+	// Tag the "optimal" installations
+	opt := ParseVersionExpression(FSettings.GetOptimalVersion());
+	if opt.Valid then begin
+		for i := 0 to FInstallations.Count - 1 do FInstallations[i].Optimal := ConditionTrue(opt, FInstallations[i]);
+	end
+	else if (FLogger <> Nil) and (FSettings.GetOptimalVersion() <> '') then
+		FLogger.Log('Ignoring invalid optimum version expression: ' + FSettings.GetOptimalVersion(), TLogLevel.WARN);
+
+	// Sort
+	if FInstallations.Count < 2 then Exit;
+	FInstallations.Sort(@CompareInstallations);
+end;
+
+procedure TEvaluator.Report();
+
+var
+	i : Integer;
+
+begin
+	if (FLogger = Nil) or (not FLogger.IsDebug()) then Exit;
+
+	if FInstallations.Count > 1 then begin
+		for i := 0 to FInstallations.Count - 1 do begin
+			FLogger.Log(
+				'Suitability-sorted Java installation ' + IntToVStr(i + 1) +
+				': Version=' + IntToVStr(FInstallations[i].Version) + ':' + IntToVStr(FInstallations[i].Build) +
+				', Type=' + InstallationTypeToStr(FInstallations[i].InstallationType) +
+				', Arch=' + ArchitectureToStr(FInstallations[i].Architecture, False) +
+				', Optimal=' + BoolToVStr(FInstallations[i].Optimal) +
+				', Path=' + FInstallations[i].Path,
+				TLogLevel.DEBUG
+			);
+		end;
+	end
+	else if FInstallations.Count = 1 then begin
+		for i := 0 to FInstallations.Count - 1 do begin
+			FLogger.Log(
+				'Mathing Java installation: ' +
+				' Version=' + IntToVStr(FInstallations[i].Version) + ':' + IntToVStr(FInstallations[i].Build) +
+				', Type=' + InstallationTypeToStr(FInstallations[i].InstallationType) +
+				', Arch=' + ArchitectureToStr(FInstallations[i].Architecture, False) +
+				', Optimal=' + BoolToVStr(FInstallations[i].Optimal) +
+				', Path=' + FInstallations[i].Path,
+				TLogLevel.DEBUG
+			);
+		end;
+	end
+	else FLogger.Log('No matching Java installation found', TLogLevel.DEBUG);
+end;
+
 procedure TEvaluator.Process();
 
 begin
 	Exclude();
+	Sort();
+	Report();
 end;
 
 constructor TEvaluator.Create(
@@ -890,6 +970,57 @@ begin
 		Result.Version := FileInfo.ProductVersionMajor;
 		Result.Build := FileInfo.ProductVersionRevision;
 		Result.Path := Path;
+	end;
+end;
+
+function ConditionTrue(const Condition : TVersionCondition; const Installation : TJavaInstallation) : Boolean;
+
+begin
+	Result := False;
+	if not Condition.Valid then Exit;
+	case Condition.CompareType of
+		TCompareType.less: begin
+			Result := (Installation.Version > 0) and (
+				(Installation.Version < Condition.Version) or (
+					(Condition.Build > -1) and (Installation.Build > -1) and
+					(Installation.Version = Condition.Version) and (Installation.Build < Condition.Build)
+				)
+			);
+		end;
+		TCompareType.lessOrEqual: begin
+			Result := (Installation.Version > 0) and (
+				(Installation.Version < Condition.Version) or
+				(
+					(Installation.Version = Condition.Version) and (Condition.Build < 0)
+				) or (
+					(Condition.Build > -1) and (Installation.Build > -1) and
+					(Installation.Version = Condition.Version) and (Installation.Build <= Condition.Build)
+				)
+			);
+		end;
+		TCompareType.more: begin
+			Result := (Installation.Version > 0) and (
+				(Installation.Version > Condition.Version) or (
+					(Condition.Build > -1) and (Installation.Build > -1) and
+					(Installation.Version = Condition.Version) and (Installation.Build > Condition.Build)
+				)
+			);
+		end;
+		TCompareType.moreOrEqual: begin
+			Result := (Installation.Version > 0) and (
+				(Installation.Version > Condition.Version) or
+				(
+					(Installation.Version = Condition.Version) and (Condition.Build < 0)
+				) or (
+					(Condition.Build > -1) and (Installation.Build > -1) and
+					(Installation.Version = Condition.Version) and (Installation.Build >= Condition.Build)
+				)
+			);
+		end;
+	else
+		Result := (Installation.Version > 0) and (Installation.Version = Condition.Version) and (
+			(Condition.Build < 0) or (Installation.Build = Condition.Build)
+		);
 	end;
 end;
 
