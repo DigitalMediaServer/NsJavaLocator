@@ -39,6 +39,7 @@ type
 		function GetEnvironmentVariables() : TVStringList;
 		function GetFilePaths() : TVStringList;
 		function GetFilteredPaths() : TVStringList;
+		function GetSkipOSPath() : Boolean;
 		function GetMinVersion() : VString;
 		function GetMaxVersion() : VString;
 		function GetOptimalVersion() : VString;
@@ -651,7 +652,11 @@ var
 begin
 	ProcessRegistry(IsWOW64(FLogger));
 	ProcessEnvironmentVariables();
-	ProcessOSPath();
+	if FSettings.GetSkipOSPath() then begin
+		if (FLogger <> Nil) and (FLogger.IsDebug()) then
+			FLogger.Log('Not looking for Java installations in OS path', TLogLevel.DEBUG);
+	end
+	else ProcessOSPath();
 	ProcessFilePaths();
 	ProcessFilteredPaths();
 

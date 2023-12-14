@@ -42,6 +42,7 @@ type
 		FEnvironmentVariables : TVStringList;
 		FFilePaths : TVStringList;
 		FFilteredPaths : TVStringList;
+		FIsSkipOSPath : Boolean;
 		FMinVersion : VString;
 		FMaxVersion : VString;
 		FOptimalVersion : VString;
@@ -57,6 +58,7 @@ type
 		function GetEnvironmentVariables() : TVStringList;
 		function GetFilePaths() : TVStringList;
 		function GetFilteredPaths() : TVStringList;
+		function GetSkipOSPath() : Boolean;
 		function GetMinVersion() : VString;
 		function GetMaxVersion() : VString;
 		function GetOptimalVersion() : VString;
@@ -68,6 +70,7 @@ type
 		property EnvironmentVariables : TVStringList read GetEnvironmentVariables;
 		property FilePaths : TVStringList read GetFilePaths;
 		property FilteredPaths : TVStringList read GetFilteredPaths;
+		property IsSkipOSPath : Boolean read GetSkipOSPath;
 		property MaxVersion : VString read GetMaxVersion;
 		property MinVersion : VString read GetMinVersion;
 		property OptimalVersion : VString read GetOptimalVersion;
@@ -188,6 +191,11 @@ begin
 	Result := FFilteredPaths;
 end;
 
+function TParameters.GetSkipOSPath() : Boolean;
+begin
+	Result := FIsSkipOSPath;
+end;
+
 function TParameters.GetMinVersion() : VString;
 begin
 	Result := FMinVersion;
@@ -241,6 +249,7 @@ const
 	poEnvDel = '/DELENVSTR';
 	poFilterAdd = '/ADDFILTER';
 	poFilterDel = '/DELFILTER';
+	poSkipOSPath = '/SKIPOSPATH';
 	poMinVer = '/MINVER';
 	poMaxVer = '/MAXVER';
 	poOptVer = '/OPTVER';
@@ -261,6 +270,7 @@ begin
 		if parameterList[i][1] = '/' then begin
 			if EqualStr(poLog, parameterList[i], False) then FIsLogging := True
 			else if EqualStr(poDialogDebug, parameterList[i], False) then FIsDialogDebug := True
+			else if EqualStr(poSkipOSPath, parameterList[i], False) then FIsSkipOSPath := True
 
 			// All value-less options must be handled before this point
 			else if (i + 1 >= parameterList.Count) or (parameterList[i + 1][1] = '/') then begin
@@ -470,6 +480,7 @@ begin
 		// Only add filters that expand - otherwise they don't exist on the system
 		if s <> StandardFilteredPaths[i] then FFilteredPaths.AddUnique(s, False);
 	end;
+	FIsSkipOSPath := False;
 	FMinVersion := '';
 	FMaxVersion := '';
 	FOptimalVersion := '';
