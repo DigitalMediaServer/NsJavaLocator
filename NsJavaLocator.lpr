@@ -58,6 +58,32 @@ type
 		property IsDialogDebug : Boolean read GetDialogDebug;
 	end;
 
+	{ TJavaInstallation }
+
+	TJavaInstallation = class(TObject)
+	public
+		Version : Integer;
+		Build : Integer;
+		Path : NSISTString;
+		Optimal : Boolean;
+		function Equals(Obj : TJavaInstallation) : boolean; overload;
+		function CalcScore : Integer;
+		constructor Create;
+		destructor Destroy; override;
+	end;
+
+	TFileInfo = record
+		Valid : Boolean;
+		FileVersionMajor : Word;
+		FileVersionMinor : Word;
+		FileVersionRevision : Word;
+		FileVersionBuild : Word;
+		ProductVersionMajor : Word;
+		ProductVersionMinor : Word;
+		ProductVersionRevision : Word;
+		ProductVersionBuild : Word;
+	end;
+
 function IntToNStr(Value : QWord) : NSISTString; overload;
 begin
 	Result := NSISTString(IntToStr(Value));
@@ -146,6 +172,37 @@ begin
 		Result := lstrcmpiA(LPCSTR(endStr), LPCSTR(subStr)) = 0;
 {$ENDIF}
 	end;
+end;
+
+{ TJavaInstallation }
+
+function TJavaInstallation.Equals(Obj : TJavaInstallation) : boolean;
+begin
+	Result := (Obj <> Nil) and (Version = Obj.Version) and (Build = Obj.Build) and
+		(Optimal = Obj.Optimal) and EqualStr(Path, Obj.Path, False);
+end;
+
+{
+	Calculates a "score" that indicates how "good" information this instance has.
+}
+function TJavaInstallation.CalcScore : Integer;
+begin
+	Result := 0;
+	if Path <> '' then Inc(Result, 5);
+	if Version > 0 then Inc(Result);
+	if Build > -1 then Inc(Result);
+end;
+
+constructor TJavaInstallation.Create;
+begin
+	Version := -1;
+	Build := -1;
+	Path := '';
+end;
+
+destructor TJavaInstallation.Destroy;
+begin
+	inherited Destroy;
 end;
 
 function SystemErrorToStr(MessageId : DWORD) : NSISTString;
@@ -361,14 +418,88 @@ begin
 	end;
 end;
 
-procedure ParseAdoptiumSemeru(hk : HKEY; Const samDesired : REGSAM; Const Debug, DialogDebug : Boolean);
+function GetFileInfo(Path : NSISTString) : TFileInfo;
 
-type
-	TJavaInstallationRec = record
-		Version : Integer;
-		Build : Integer;
-		Path : NSISTString;
+var
+	size, dwHandle, valueSize : DWORD;
+	buffer : Pointer;
+	value : PVSFixedFileInfo;
+
+begin
+{$WARN 5060 off : Function result variable does not seem to be initialized}
+	FillChar(Result, sizeof(Result), 0);
+{$WARN 5060 on : Function result variable does not seem to be initialized}
+	UniqueString(Path);
+{$IFDEF UNICODE}
+	size := GetFileVersionInfoSizeW(LPWSTR(Path), @dwHandle);
+{$ELSE}
+	size := GetFileVersionInfoSizeA(LPCSTR(Path), @dwHandle);
+{$ENDIF}
+	if size = 0 then Exit;
+	GetMem(buffer, size);
+	try
+{$IFDEF UNICODE}
+		if GetFileVersionInfoW(PWideChar(Path), dwHandle, size, buffer) then
+{$ELSE}
+		if GetFileVersionInfoA(PChar(Path), dwHandle, size, buffer) then
+{$ENDIF}
+		begin
+{$WARN 5057 off : Local variable "$1" does not seem to be initialized}
+			if VerQueryValueA(buffer, '\', value, valueSize) then begin
+{$WARN 5057 on : Local variable "$1" does not seem to be initialized}
+				Result.FileVersionMajor := (value^.dwFileVersionMS and $ffff0000) shr 16;
+				Result.FileVersionMinor := value^.dwFileVersionMS and $ffff;
+				Result.FileVersionRevision := (value^.dwFileVersionLS and $ffff0000) shr 16;
+				Result.FileVersionBuild := value^.dwFileVersionLS and $ffff;
+				Result.ProductVersionMajor := (value^.dwProductVersionMS and $ffff0000) shr 16;
+				Result.ProductVersionMinor := value^.dwProductVersionMS and $ffff;
+				Result.ProductVersionRevision := (value^.dwProductVersionLS and $ffff0000) shr 16;
+				Result.ProductVersionBuild := value^.dwProductVersionLS and $ffff;
+				Result.Valid := True;
+			end;
+		end;
+	finally
+		Freemem(buffer);
 	end;
+end;
+
+{
+	Creates a TJavaInstallation instance if a valid result is found.
+	IE, Result must be Free'd if it's non-nil upon return.
+}
+function GetJavawInfo(Path : NSISTString) : TJavaInstallation;
+
+var
+	FileInfo : TFileInfo;
+
+begin
+	Result := Nil;
+	if Path = '' then Exit;
+
+	if not EndsWith(NSISTString('javaw.exe'), Path, False) then begin
+		if EndsWith('bin', Path, False) then Path := Path + '\'
+		else if not EndsWith('bin\', Path, False) then begin
+			if EndsWith('\', Path, True) then Path := Path + 'bin\'
+			else Path := Path + '\bin\';
+		end;
+		Path := Path + 'javaw.exe';
+	end;
+
+	FileInfo := GetFileInfo(Path);
+	if FileInfo.Valid then begin
+		// Most Java 8 and below executables have the revision version stored at 10x. This is an attempt remedy the issue.
+		if (FileInfo.FileVersionMajor <= 8) and (FileInfo.FileVersionRevision > 0) and (FileInfo.FileVersionRevision mod 10 = 0) then
+			FileInfo.FileVersionRevision := FileInfo.FileVersionRevision div 10;
+		if (FileInfo.ProductVersionMajor <= 8) and (FileInfo.ProductVersionRevision > 0) and (FileInfo.ProductVersionRevision mod 10 = 0) then
+			FileInfo.ProductVersionRevision := FileInfo.ProductVersionRevision div 10;
+		Result := TJavaInstallation.Create;
+		Result.Version := FileInfo.ProductVersionMajor;
+		Result.Build := FileInfo.ProductVersionRevision;
+		Result.Path := Path;
+	end;
+end;
+
+function ParseAdoptiumSemeru(hk : HKEY; Const samDesired : REGSAM; Const Debug, DialogDebug : Boolean) : TJavaInstallation;
 
 const
 	ModernJavaVersionRE = '\s*(\d+)\.(\d+)\.(\d+).*';
@@ -376,12 +507,12 @@ const
 var
 	SubKeys, SubKeys2, SubKeys3 : TNSISTStringList;
 	regEx : TRegExpr;
-	i, j, k : Integer;
-	iRec : TJavaInstallationRec;
+	i, j, k, Version, Build : Integer;
 	hk2, hk3, hk4 : HKEY;
 	s : NSISTString;
 
 begin
+	Result := Nil;
 	SubKeys := EnumerateRegSubKeys(hk, Debug, DialogDebug);
 	try
 		if SubKeys.Count > 0 then begin
@@ -392,10 +523,8 @@ begin
 					regEx.InputString := SubKeys[i];
 					if (regEx.Exec) and (regEx.Match[1] <> '1') then
 					begin
-						iRec.Version := NStrToIntDef(regEx.Match[1], -1);
-						if iRec.Version < 1 then Continue;
-						iRec.Build := NStrToIntDef(regEx.Match[3], -1);
-						if iRec.Build < 0 then Continue;
+						Version := NStrToIntDef(regEx.Match[1], -1);
+						Build := NStrToIntDef(regEx.Match[3], -1);
 						hk2 := OpenRegKey(hk, SubKeys[i], samDesired, Debug, DialogDebug);
 						if hk2 <> 0 then begin
 							SubKeys2 := EnumerateRegSubKeys(hk2, Debug, DialogDebug);
@@ -412,6 +541,38 @@ begin
 													if hk4 <> 0 then begin
 														s := GetRegString(hk4, 'Path', Debug, DialogDebug);
 														RegCloseKey(hk4);
+														Result := GetJavawInfo(s);
+														if Result <> Nil then begin
+															if (Version > 0) and (Version <> Result.Version) then begin
+																if Debug then LogMessage(
+																	'Parsed version (' + IntToStr(Version) + ') and file version (' +
+																	IntToStr(Result.Version) + ') differs - using parsed version'
+																);
+																if DialogDebug then NSISDialog(
+																	'Parsed version (' + IntToStr(Version) + ') and file version (' +
+																	IntToStr(Result.Version) + ') differs - using parsed version',
+																	'Warning',
+																	MB_OK,
+																	Warning
+																);
+																Result.Version := Version;
+															end;
+														end;
+														if (Build > -1) and (Build <> Result.Build) then begin
+															if Debug then LogMessage(
+																'Parsed build (' + IntToStr(Version) + ') and file build (' +
+																IntToStr(Result.Version) + ') differs - using parsed build'
+															);
+															if DialogDebug then NSISDialog(
+																'Parsed build (' + IntToStr(Version) + ') and file build (' +
+																IntToStr(Result.Version) + ') differs - using parsed build',
+																'Warning',
+																MB_OK,
+																Warning
+															);
+															Result.Build := Build;
+														end;
+														Exit;
 													end;
 												end;
 											finally
@@ -447,6 +608,7 @@ var
 	run : Integer = 0;
 	samDesired : REGSAM = baseSamDesired;
 	subKey : NSISTString;
+	Installation : TJavaInstallation;
 
 begin
 	repeat
@@ -460,8 +622,14 @@ begin
 		for subKey in Params.RegistryPaths do begin
 			h := OpenRegKey(rootKey, subKey, samDesired, Params.IsLogging, Params.IsDialogDebug);
 			if h <> 0 then begin
-				ParseAdoptiumSemeru(h, samDesired, Params.IsLogging, Params.IsDialogDebug);
-				RegCloseKey(h);
+				try
+					Installation := ParseAdoptiumSemeru(h, samDesired, Params.IsLogging, Params.IsDialogDebug);
+					RegCloseKey(h);
+					if Installation <> Nil then
+					begin
+					end;
+				finally
+				end;
 			end;
 		end;
 		Inc(run);
