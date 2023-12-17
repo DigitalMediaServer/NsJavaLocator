@@ -19,7 +19,7 @@
     </General>
     <VersionInfo>
       <UseVersionInfo Value="True"/>
-      <RevisionNr Value="1"/>
+      <MajorVersionNr Value="1"/>
       <CharSet Value="04B0"/>
       <StringTable FileDescription="NSIS plugin" OriginalFilename="NsJavaLocator.dll" ProductName="NSIS Java Locator"/>
     </VersionInfo>
