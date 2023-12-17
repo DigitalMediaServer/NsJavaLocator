@@ -33,6 +33,7 @@ uses
 	Utils;
 
 type
+	TReturnOption = (Version, Build, VersionString, InstallationType, Architecture, ArchitectureBits);
 
 	{ TParameters }
 
@@ -49,6 +50,7 @@ type
 		FLogLevel : TLogLevel;
 		FIsLogging : Boolean;
 		FIsDialogDebug : Boolean;
+		FReturnOptions : TFPGList<TReturnOption>;
 		function ReadParams() : TVStringList;
 		function GetLogLevel() : TLogLevel;
 		function GetLogging() : Boolean;
@@ -62,6 +64,7 @@ type
 		function GetMinVersion() : VString;
 		function GetMaxVersion() : VString;
 		function GetOptimalVersion() : VString;
+		function GetReturnOptions() : TFPGList<TReturnOption>;
 		procedure ParseParams();
 		constructor Create();
 		destructor Destroy(); override;
@@ -77,6 +80,7 @@ type
 		property LogLevel : TLogLevel read GetLogLevel;
 		property IsLogging : Boolean read GetLogging;
 		property IsDialogDebug : Boolean read GetDialogDebug;
+		property ReturnOptions : TFPGList<TReturnOption> read GetReturnOptions;
 	end;
 
 	{ TRunner }
@@ -85,6 +89,7 @@ type
 	private
 		FParams : TParameters;
 		FLogLevel : TLogLevel;
+		procedure ReturnResults(const Installations : TFPGObjectList<TJavaInstallation>);
 	public
 		procedure Log(const Message : VString; const LogLevel : TLogLevel);
 		function IsWarn() : Boolean;
@@ -96,6 +101,46 @@ type
 	end;
 
 { TRunner }
+
+procedure TRunner.ReturnResults(const Installations : TFPGObjectList<TJavaInstallation>);
+
+var
+	Installation : TJavaInstallation;
+	i : Integer;
+	s : VString;
+
+begin
+	if (Installations = Nil) or (Installations.Count < 1) then begin
+		for i := 1 to FParams.ReturnOptions.Count do PushString('');
+		PushString('');
+		Exit;
+	end;
+	Installation := Installations[0];
+	for i := FParams.ReturnOptions.Count - 1 downto 0 do begin
+		case FParams.ReturnOptions[i] of
+			TReturnOption.Version: begin
+				if Installation.Version > 0 then PushString(IntToVStr(Installation.Version))
+				else PushString('');
+			end;
+			TReturnOption.Build: begin
+				if Installation.Build > -1 then PushString(IntToVStr(Installation.Build))
+				else PushString('');
+			end;
+			TReturnOption.VersionString: begin
+				if Installation.Version < 1 then PushString('')
+				else begin
+					s := IntToVStr(Installation.Version);
+					if Installation.Build > -1 then s := s + '.' + IntToVStr(Installation.Build);
+					PushString(s);
+				end;
+			end;
+			TReturnOption.InstallationType: PushString(InstallationTypeToStr(Installation.InstallationType));
+			TReturnOption.Architecture: PushString(ArchitectureToStr(Installation.Architecture, False));
+			TReturnOption.ArchitectureBits: PushString(ArchitectureToStr(Installation.Architecture, True));
+		end;
+	end;
+	PushString(Installation.Path);
+end;
 
 procedure TRunner.Log(const Message : VString; const LogLevel : TLogLevel);
 
@@ -154,6 +199,7 @@ begin
 		finally
 			Evaluator.Free();
 		end;
+		ReturnResults(Parser.Installations);
 	finally
 		Parser.Free();
 	end;
@@ -211,6 +257,11 @@ begin
 	Result := FOptimalVersion;
 end;
 
+function TParameters.GetReturnOptions() : TFPGList<TReturnOption>;
+begin
+	Result := FReturnOptions;
+end;
+
 function TParameters.ReadParams() : TVStringList;
 
 var
@@ -256,6 +307,12 @@ const
 	poLog = '/LOG';
 	poDialogDebug = '/DIALOGDEBUG';
 	poLogLevel = '/LOGLEVEL';
+	poRetVersion = '/RETVERSION';
+	poRetBuild = '/RETBUILD';
+	poRetVersionStr = '/RETVERSIONSTR';
+	poRetInstType = '/RETINSTTYPE';
+	poRetArch = '/RETARCH';
+	poRetArchBits = '/RETARCHBITS';
 
 var
 	parameterList : TVStringList;
@@ -271,6 +328,12 @@ begin
 			if EqualStr(poLog, parameterList[i], False) then FIsLogging := True
 			else if EqualStr(poDialogDebug, parameterList[i], False) then FIsDialogDebug := True
 			else if EqualStr(poSkipOSPath, parameterList[i], False) then FIsSkipOSPath := True
+			else if EqualStr(poRetVersion, parameterList[i], False) then FReturnOptions.Add(TReturnOption.Version)
+			else if EqualStr(poRetBuild, parameterList[i], False) then FReturnOptions.Add(TReturnOption.Build)
+			else if EqualStr(poRetVersionStr, parameterList[i], False) then FReturnOptions.Add(TReturnOption.VersionString)
+			else if EqualStr(poRetInstType, parameterList[i], False) then FReturnOptions.Add(TReturnOption.InstallationType)
+			else if EqualStr(poRetArch, parameterList[i], False) then FReturnOptions.Add(TReturnOption.Architecture)
+			else if EqualStr(poRetArchBits, parameterList[i], False) then FReturnOptions.Add(TReturnOption.ArchitectureBits)
 
 			// All value-less options must be handled before this point
 			else if (i + 1 >= parameterList.Count) or (parameterList[i + 1][1] = '/') then begin
@@ -487,10 +550,12 @@ begin
 	FLogLevel := TLogLevel.INFO;
 	FIsLogging := False;
 	FIsDialogDebug := False;
+	FReturnOptions := TFPGList<TReturnOption>.Create();
 end;
 
 destructor TParameters.Destroy();
 begin
+	FReturnOptions.Free();
 	FFilteredPaths.Free();
 	FFilePaths.Free();
 	FEnvironmentVariables.Free();
